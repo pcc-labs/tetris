@@ -67,6 +67,15 @@ broker-free: a bridge process (see pokemon-kafka's `docker/game-event-bridge`)
 can tail these files into Kafka without the agent knowing. Recorded runs land
 in `runs/<id>/` with `events.jsonl` and `summary.json` (the healer's input).
 
+## Session capture
+
+Agent-session traces are captured by **paperd** (the Paper gateway), not by
+anything in this repo. Gameplay itself makes no LLM calls — the only LLM
+sessions here are discovery's `claude -p` proposals, and that subprocess
+inherits the environment, so running from a paper-gatewayed shell routes its
+traces through paperd automatically. Game telemetry is separate: JSONL events
+under `data/telemetry/` and recorded runs under `runs/`.
+
 ## How this differs from pokemon-kafka
 
 - One installable package (`src/tetris_agent/`), not 28 flat scripts.
