@@ -57,3 +57,9 @@ def test_agent_places_pieces_and_records(rom_path, tmp_path):
     events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
     spawns = [e for e in events if e["event_type"] == "piece_spawn"]
     assert len(spawns) == 5
+
+
+def test_build_config_live_flag():
+    cfg = build_config(["--live"])
+    assert cfg.live is True
+    assert build_config([]).live is False

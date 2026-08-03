@@ -23,6 +23,7 @@ class Config:
     label: str
     no_self_heal: bool
     window: str
+    live: bool
 
 
 def build_config(argv=None) -> Config:
@@ -38,6 +39,7 @@ def build_config(argv=None) -> Config:
     parser.add_argument("--label", default="")
     parser.add_argument("--no-self-heal", action="store_true")
     parser.add_argument("--window", default="null", choices=["null", "SDL2"])
+    parser.add_argument("--live", action="store_true", help="watch the game in a window at real-time speed")
     return Config(**vars(parser.parse_args(argv)))
 
 
@@ -58,7 +60,8 @@ def agent_main(argv=None) -> int:
     publisher = NoopPublisher() if cfg.no_telemetry else JSONLPublisher(cfg.telemetry_dir, session_id)
     recorder = None if cfg.no_record else RunRecorder(cfg.runs_dir, label=cfg.label)
 
-    emu = Emulator(cfg.rom, headless=cfg.window == "null")
+    headless = cfg.window == "null" and not cfg.live
+    emu = Emulator(cfg.rom, headless=headless, speed=1 if cfg.live else 0)
     try:
         agent = TetrisAgent(emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces)
         fitness = agent.run(timer_div=cfg.timer_div)

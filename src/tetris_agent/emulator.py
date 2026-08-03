@@ -12,8 +12,10 @@ _PLAYFIELD_MAX_X = 96
 
 
 class Emulator:
-    def __init__(self, rom_path: str | Path, headless: bool = True):
+    def __init__(self, rom_path: str | Path, headless: bool = True, speed: int = 0):
+        """speed: emulation speed multiplier; 0 = unlimited, 1 = real time (for --live)."""
         self.pyboy = PyBoy(str(rom_path), window="null" if headless else "SDL2")
+        self.pyboy.set_emulation_speed(speed)
         self.game_wrapper = self.pyboy.game_wrapper
 
     def start(self, timer_div: int | None = None) -> None:
