@@ -95,3 +95,23 @@ def test_run_idle_when_queue_empty(tmp_path):
         queue_path=tmp_path / "missing.json", state_path=tmp_path / "state.json", healer_state_path=tmp_path / "h.json"
     )
     assert report["status"] == "idle"
+
+
+def test_run_cleans_up_worktree_when_propose_raises(monkeypatch, tmp_path):
+    import subprocess as sp
+
+    queue_path = tmp_path / "queue.json"
+    queue_path.write_text(json.dumps([ENTRY]))
+    events = []
+
+    def exploding_propose(wt, prompt):
+        raise sp.TimeoutExpired(cmd="claude", timeout=3600)
+
+    monkeypatch.setattr(discovery, "worktree_add", lambda root, branch: tmp_path / "wt")
+    monkeypatch.setattr(discovery, "propose", exploding_propose)
+    monkeypatch.setattr(discovery, "cleanup", lambda wt, branch: events.append("cleanup"))
+
+    report = run(queue_path=queue_path, state_path=tmp_path / "state.json", healer_state_path=tmp_path / "h.json")
+    assert report["status"] == "failed"
+    assert report["reason"] == "exception"
+    assert events == ["cleanup"]

@@ -131,15 +131,18 @@ def _mean_gate_score(directory: str | Path, rom_path: str | Path) -> float:
     scores = []
     for seed in GATE_SEEDS:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-            out_path = tmp.name
-        cmd = [
-            "uv", "--directory", str(directory), "run", "tetris-agent",
-            "--rom", str(Path(rom_path).resolve()),
-            "--max-pieces", str(GATE_MAX_PIECES), "--timer-div", str(seed),
-            "--no-self-heal", "--no-record", "--no-telemetry", "--output-json", out_path,
-        ]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
-        scores.append(race_score(json.loads(Path(out_path).read_text())))
+            out_path = Path(tmp.name)
+        try:
+            cmd = [
+                "uv", "--directory", str(directory), "run", "tetris-agent",
+                "--rom", str(Path(rom_path).resolve()),
+                "--max-pieces", str(GATE_MAX_PIECES), "--timer-div", str(seed),
+                "--no-self-heal", "--no-record", "--no-telemetry", "--output-json", str(out_path),
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
+            scores.append(race_score(json.loads(out_path.read_text())))
+        finally:
+            out_path.unlink(missing_ok=True)
     return sum(scores) / len(scores)
 
 
@@ -208,10 +211,16 @@ def run(
         _save_json(queue_path, queue)
         _save_json(state_path, state)
 
-        if propose(worktree, prompt):
-            gates = run_gates(worktree, rom_path, entry)
-        else:
-            gates = {"passed": False, "reason": "propose"}
+        # A hung claude CLI or a crashing candidate agent must still clean up
+        # the worktree — the outer handler can't, it no longer knows the branch.
+        try:
+            if propose(worktree, prompt):
+                gates = run_gates(worktree, rom_path, entry)
+            else:
+                gates = {"passed": False, "reason": "propose"}
+        except Exception as exc:
+            logger.exception("discovery propose/gates crashed")
+            gates = {"passed": False, "reason": "exception", "detail": repr(exc)}
         detail = {k: v for k, v in gates.items() if k != "passed"}
         if gates["passed"]:
             url = push_and_pr(worktree, branch, entry)
