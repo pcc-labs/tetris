@@ -29,9 +29,12 @@ def _normalize(cells: set[tuple[int, int]]) -> Cells:
     return frozenset((r - min_r, c - min_c) for r, c in cells)
 
 
-def _rotate_cw(cells: Cells) -> Cells:
-    max_r = max(r for r, _ in cells)
-    return _normalize({(c, max_r - r) for r, c in cells})
+def _rotate_ccw(cells: Cells) -> Cells:
+    """One step of the rotation-value encoding. Verified against the ROM:
+    incrementing the rot bits of 0xC203 corresponds to a counter-clockwise
+    silhouette rotation (the A button *decrements* the value)."""
+    max_c = max(c for _, c in cells)
+    return _normalize({(max_c - c, r) for r, c in cells})
 
 
 def _build_shapes() -> dict[tuple[str, int], Cells]:
@@ -40,7 +43,7 @@ def _build_shapes() -> dict[tuple[str, int], Cells]:
         cells = spawn
         for rot in range(4):
             shapes[(name, rot)] = cells
-            cells = _rotate_cw(cells)
+            cells = _rotate_ccw(cells)
     return shapes
 
 

@@ -1,0 +1,70 @@
+"""Thin PyBoy wrapper — the only module that imports pyboy."""
+
+from pathlib import Path
+
+import numpy as np
+from pyboy import PyBoy
+
+CURRENT_PIECE_ADDR = 0xC203
+NEXT_PIECE_ADDR = 0xC213
+# The play field spans pixel x 16..95 (tile cols 2..11); sprites at x >= 96 are the preview.
+_PLAYFIELD_MAX_X = 96
+
+
+class Emulator:
+    def __init__(self, rom_path: str | Path, headless: bool = True):
+        self.pyboy = PyBoy(str(rom_path), window="null" if headless else "SDL2")
+        self.game_wrapper = self.pyboy.game_wrapper
+
+    def start(self, timer_div: int | None = None) -> None:
+        self.game_wrapper.start_game(timer_div=timer_div)
+
+    def tick(self, n: int = 1) -> None:
+        self.pyboy.tick(n, True)
+
+    def press(self, button: str, ticks_after: int = 4) -> None:
+        self.pyboy.button(button)
+        self.tick(ticks_after)
+
+    def read(self, addr: int) -> int:
+        return self.pyboy.memory[addr]
+
+    def falling_sprite_cells(self) -> frozenset[tuple[int, int]]:
+        positions = []
+        for i in range(40):
+            sprite = self.pyboy.get_sprite(i)
+            if sprite.on_screen:
+                positions.append((sprite.x, sprite.y))
+        from tetris_agent.state import _cells_from_sprites
+
+        return _cells_from_sprites(positions)
+
+    def game_area(self) -> np.ndarray:
+        return np.asarray(self.game_wrapper.game_area())
+
+    @property
+    def score(self) -> int:
+        return self.game_wrapper.score
+
+    @property
+    def level(self) -> int:
+        return self.game_wrapper.level
+
+    @property
+    def lines(self) -> int:
+        return self.game_wrapper.lines
+
+    @property
+    def game_over(self) -> bool:
+        return self.game_wrapper.game_over()
+
+    def save_state(self, path: str | Path) -> None:
+        with open(path, "wb") as f:
+            self.pyboy.save_state(f)
+
+    def load_state(self, path: str | Path) -> None:
+        with open(path, "rb") as f:
+            self.pyboy.load_state(f)
+
+    def stop(self) -> None:
+        self.pyboy.stop(save=False)
