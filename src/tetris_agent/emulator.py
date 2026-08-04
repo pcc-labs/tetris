@@ -17,12 +17,22 @@ class Emulator:
         self.pyboy = PyBoy(str(rom_path), window="null" if headless else "SDL2")
         self.pyboy.set_emulation_speed(speed)
         self.game_wrapper = self.pyboy.game_wrapper
+        # Optional callback fired roughly every _FRAME_HOOK_TICKS ticks (live streaming).
+        self.frame_hook = None
+        self._ticks_since_frame = 0
+
+    _FRAME_HOOK_TICKS = 12
 
     def start(self, timer_div: int | None = None) -> None:
         self.game_wrapper.start_game(timer_div=timer_div)
 
     def tick(self, n: int = 1) -> None:
         self.pyboy.tick(n, True)
+        if self.frame_hook is not None:
+            self._ticks_since_frame += n
+            if self._ticks_since_frame >= self._FRAME_HOOK_TICKS:
+                self._ticks_since_frame = 0
+                self.frame_hook()
 
     def press(self, button: str, ticks_after: int = 4) -> None:
         self.pyboy.button(button)

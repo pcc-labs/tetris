@@ -86,13 +86,13 @@ body {
 .bezel-stripe i { display: block; height: 2px; flex: 1; }
 .bezel-stripe .s1 { background: var(--magenta); }
 .bezel-stripe .s2 { background: #3f5f8a; }
-.led-row { position: absolute; margin-top: 52px; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 30px; margin-left: -6px; }
+.led-row { position: absolute; margin-top: 52px; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 26px; margin-left: -10px; }
 .led { width: 9px; height: 9px; border-radius: 50%; background: #3a2026; box-shadow: inset 0 1px 2px rgba(0,0,0,.6); }
 .led.on { background: #ff3b30; box-shadow: 0 0 10px 2px rgba(255,59,48,.7); }
 .led-label { font-size: 7px; color: #9aa0b5; letter-spacing: 1px; }
 .lcd {
   position: relative;
-  margin: 0 auto; width: 320px; max-width: 100%;
+  margin: 0 8px 0 auto; width: 300px; max-width: calc(100% - 26px);
   background: linear-gradient(160deg, #8fae12, #7f9c14);
   padding: 10px;
   border-radius: 4px;

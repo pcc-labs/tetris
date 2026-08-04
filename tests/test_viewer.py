@@ -66,3 +66,12 @@ def test_index_serves_gameboy_shell(tmp_path):
     page = client.get("/")
     assert page.status_code == 200
     assert "text/html" in page.headers["content-type"]
+
+
+def test_live_streamer_survives_unreachable_viewer():
+    from tetris_agent.live import LiveStreamer
+
+    streamer = LiveStreamer("ws://127.0.0.1:1")  # nothing listens here
+    streamer.send_frame(1, b"\x89PNG fake")
+    streamer.send_event({"event_type": "piece_spawn"})
+    streamer.close()  # no exception = pass

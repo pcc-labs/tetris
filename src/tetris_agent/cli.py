@@ -24,6 +24,7 @@ class Config:
     no_self_heal: bool
     window: str
     live: bool
+    viewer_url: str
 
 
 def build_config(argv=None) -> Config:
@@ -39,7 +40,10 @@ def build_config(argv=None) -> Config:
     parser.add_argument("--label", default="")
     parser.add_argument("--no-self-heal", action="store_true")
     parser.add_argument("--window", default="null", choices=["null", "SDL2"])
-    parser.add_argument("--live", action="store_true", help="watch the game in a window at real-time speed")
+    parser.add_argument(
+        "--live", action="store_true", help="real-time speed + stream frames/events to the browser viewer"
+    )
+    parser.add_argument("--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --live")
     return Config(**vars(parser.parse_args(argv)))
 
 
@@ -60,13 +64,29 @@ def agent_main(argv=None) -> int:
     publisher = NoopPublisher() if cfg.no_telemetry else JSONLPublisher(cfg.telemetry_dir, session_id)
     recorder = None if cfg.no_record else RunRecorder(cfg.runs_dir, label=cfg.label)
 
-    headless = cfg.window == "null" and not cfg.live
-    emu = Emulator(cfg.rom, headless=headless, speed=1 if cfg.live else 0)
+    streamer = None
+    frame_sinks = []
+    if cfg.live:
+        from tetris_agent.agent import _Tee
+        from tetris_agent.live import LiveEventSink, LiveStreamer
+
+        streamer = LiveStreamer(cfg.viewer_url)
+        publisher = _Tee(publisher, LiveEventSink(streamer))
+        frame_sinks.append(streamer.send_frame)
+
+    emu = Emulator(cfg.rom, headless=cfg.window == "null", speed=1 if cfg.live else 0)
     try:
-        agent = TetrisAgent(emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces)
+        agent = TetrisAgent(
+            emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces,
+            frame_sinks=frame_sinks,
+        )
+        if streamer is not None:
+            emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
         fitness = agent.run(timer_div=cfg.timer_div)
     finally:
         emu.stop()
+        if streamer is not None:
+            streamer.close()
 
     print(json.dumps(fitness, indent=2))
     fitness_path = Path(cfg.output_json or DEFAULT_FITNESS_PATH)

@@ -43,11 +43,27 @@ uv sync
 # Put the ROM at rom/tetris.gb (gitignored).
 
 uv run tetris-agent --max-pieces 200          # play; self-heals at session end
-uv run tetris-agent --live --max-pieces 50    # watch it play in a window at 1x speed
 uv run tetris-agent --timer-div 0             # deterministic piece sequence
 uv run tetris-healer check data/last_fitness.json
 uv run tetris-discovery run --dry-run         # print the escalation prompt
 ```
+
+## Demo: the GRAMBOY viewer
+
+A Game Boy in your browser — live view and session replay:
+
+```bash
+uv run tetris-viewer                          # http://127.0.0.1:8000
+uv run tetris-agent --live --max-pieces 60    # streams into the viewer at 1x speed
+```
+
+**LIVE** shows the running agent on the LCD with telemetry (score/lines/holes/
+misexec) and the event bus. **REPLAY** lists recorded runs as cartridges —
+click one to insert it, then use the transport (or START/A/B on the shell) to
+play, scrub, and change speed. Every recorded run captures PNG frames at each
+piece spawn/lock into `runs/<id>/frames/`, so demos replay anywhere without
+the emulator. Streaming is best-effort: if the viewer isn't running, `--live`
+just plays at real-time speed and drops frames silently.
 
 `--no-self-heal`, `--no-record`, and `--no-telemetry` turn off the healing
 chain, `runs/` recording, and JSONL telemetry respectively.

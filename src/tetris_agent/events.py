@@ -19,8 +19,8 @@ def _envelope(event_type: str, turn: int, data: dict) -> dict:
     }
 
 
-def build_session_event(phase: str, data: dict) -> dict:
-    return _envelope("session", 0, {"phase": phase, **data})
+def build_session_event(phase: str, data: dict, turn: int = 0) -> dict:
+    return _envelope("session", turn, {"phase": phase, **data})
 
 
 def build_spawn_event(turn: int, piece: str, next_piece: str) -> dict:
@@ -53,7 +53,7 @@ class EventCollector:
         self.turn = 0
 
     def session(self, phase: str, data: dict) -> None:
-        self.publisher.publish(build_session_event(phase, data))
+        self.publisher.publish(build_session_event(phase, data, self.turn))
 
     def spawn(self, piece: str, next_piece: str) -> None:
         self.turn += 1
