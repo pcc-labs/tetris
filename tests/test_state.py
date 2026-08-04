@@ -80,3 +80,16 @@ def test_shapes_table_matches_rom_for_all_pieces_and_rotations(rom_path):
     finally:
         emu.stop()
     assert validated == set(PIECES), f"only validated {sorted(validated)}"
+
+
+@pytest.mark.rom
+def test_screenshot_returns_png(rom_path):
+    from tetris_agent.emulator import Emulator
+
+    emu = Emulator(rom_path)
+    try:
+        emu.start(timer_div=0x00)
+        png = emu.screenshot()
+    finally:
+        emu.stop()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"

@@ -40,14 +40,24 @@ class TetrisAgent:
         collector: EventCollector,
         recorder: RunRecorder | None = None,
         max_pieces: int = 300,
+        frame_sinks: list | None = None,
     ):
         self.emu = emu
         self.genome = genome
         self.collector = collector
         self.recorder = recorder
         self.max_pieces = max_pieces
+        self.frame_sinks = list(frame_sinks or [])
         if recorder is not None:
             collector.publisher = _Tee(collector.publisher, _RecorderSink(recorder))
+            self.frame_sinks.append(recorder.record_frame)
+
+    def _capture_frame(self) -> None:
+        if not self.frame_sinks:
+            return
+        png = self.emu.screenshot()
+        for sink in self.frame_sinks:
+            sink(self.collector.turn, png)
 
     def run(self, timer_div: int | None = None) -> dict:
         self.emu.start(timer_div=timer_div)
@@ -71,11 +81,13 @@ class TetrisAgent:
                 break
             self.collector.spawn(state.falling.name, state.next_piece)
             self.collector.decision(placement)
+            self._capture_frame()
             result = controller.execute(placement)
             post = read_state(self.emu)
             f = features(post.board)
             tracker.on_lock(f, result.misexec)
             self.collector.locked(result.lines_delta, f, result.misexec)
+            self._capture_frame()
             placed += 1
             if result.replanned:
                 self.collector.stuck(streak=result.misexec, detail="placement drifted from plan")

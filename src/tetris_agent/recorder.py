@@ -17,6 +17,13 @@ class RunRecorder:
     def record_event(self, event: dict) -> None:
         self._events.append(event)
 
+    def record_frame(self, turn: int, png: bytes) -> None:
+        """Frames are written immediately — they're too big to buffer."""
+        frames_dir = self.runs_dir / self.run_id / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        self._frame_seq = getattr(self, "_frame_seq", 0) + 1
+        (frames_dir / f"{self._frame_seq:04d}-t{turn}.png").write_bytes(png)
+
     def finalize(self, fitness: dict, params: dict) -> Path:
         out = self.runs_dir / self.run_id
         out.mkdir(parents=True, exist_ok=True)

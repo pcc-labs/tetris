@@ -51,3 +51,12 @@ def test_recorder_writes_run_directory(tmp_path):
     assert summary["run_id"] == out.name
     meta = json.loads((out / "meta.json").read_text())
     assert meta["label"] == "test-run"
+
+
+def test_recorder_writes_frames_immediately(tmp_path):
+    rec = RunRecorder(tmp_path, label="frames")
+    rec.record_frame(1, b"\x89PNG-one")
+    rec.record_frame(2, b"\x89PNG-two")
+    frames = sorted((tmp_path / rec.run_id / "frames").iterdir())
+    assert [f.name for f in frames] == ["0001-t1.png", "0002-t2.png"]
+    assert frames[0].read_bytes() == b"\x89PNG-one"

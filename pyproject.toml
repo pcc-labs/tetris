@@ -3,7 +3,14 @@ name = "tetris-agent"
 version = "0.1.0"
 description = "Self-healing Game Boy Tetris agent: fitness-driven genome tuning with LLM escalation"
 requires-python = ">=3.11"
-dependencies = ["pyboy>=2.4", "numpy>=1.26"]
+dependencies = [
+    "pyboy>=2.4",
+    "numpy>=1.26",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.1",
+    "websockets>=17.0.1",
+    "pillow>=12.3.0",
+]
 
 [project.scripts]
 tetris-agent = "tetris_agent.cli:agent_main"
@@ -11,7 +18,12 @@ tetris-healer = "tetris_agent.cli:healer_main"
 tetris-discovery = "tetris_agent.cli:discovery_main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+]
 
 [build-system]
 requires = ["hatchling"]

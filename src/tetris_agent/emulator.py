@@ -44,6 +44,14 @@ class Emulator:
     def game_area(self) -> np.ndarray:
         return np.asarray(self.game_wrapper.game_area())
 
+    def screenshot(self) -> bytes:
+        """Current screen as PNG bytes (needs Pillow)."""
+        import io
+
+        buf = io.BytesIO()
+        self.pyboy.screen.image.convert("RGB").save(buf, format="PNG")
+        return buf.getvalue()
+
     @property
     def score(self) -> int:
         return self.game_wrapper.score
