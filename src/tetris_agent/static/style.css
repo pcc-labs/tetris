@@ -170,6 +170,7 @@ body {
 .ticker li { padding: 3px 0; border-bottom: 1px dashed #262b34; color: #9aa3b2; display: flex; gap: 10px; }
 .ticker li .t { color: var(--dim); min-width: 42px; }
 .ticker li.warn { color: var(--amber); }
+.ticker li.reason { color: #cfd6e4; font-style: italic; }
 .ticker li.bad { color: #ff5e57; }
 
 /* transport */

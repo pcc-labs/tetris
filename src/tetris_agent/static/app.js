@@ -50,6 +50,7 @@ function applyEvent(e) {
       break;
     case "placement_decision":
       tick({ turn: e.turn, text: `plan rot=${d.rotation} col=${d.col}` });
+      if (d.reason) tick({ turn: e.turn, text: `“${d.reason}”` }, "reason");
       break;
     case "piece_locked":
       state.hud.lines += d.lines_delta || 0;
@@ -66,7 +67,10 @@ function applyEvent(e) {
       tick({ turn: e.turn, text: `game over — score ${d.fitness?.score}` }, "bad");
       break;
     case "session":
-      tick({ turn: 0, text: `session ${d.phase}` });
+      tick({ turn: 0, text: `session ${d.phase}${d.policy ? ` — ${d.policy}` : ""}` });
+      if (d.fitness?.policy?.cost_usd) {
+        tick({ turn: 0, text: `cost $${d.fitness.policy.cost_usd.toFixed(4)}` }, "warn");
+      }
       break;
   }
   renderHud();
