@@ -184,22 +184,64 @@ function cycleSpeed() {
   if (state.playing) setPlaying(true);
 }
 
+/* ── BENCH mode ── */
+const BENCH_COLS = [
+  ["arm", "ARM"], ["race_score", "RACE"], ["score", "SCORE"], ["lines", "LINES"],
+  ["pieces", "PIECES"], ["avg_holes", "HOLES"], ["illegal", "ILLEGAL"],
+  ["latency_ms", "MS/DEC"], ["cost_usd", "COST $"],
+];
+
+async function loadBench() {
+  const runs = await (await fetch("/api/benchmarks")).json();
+  const body = $("bench-body");
+  if (!runs.length) {
+    body.textContent = "no benchmark runs yet — try: uv run tetris-bench --estimate";
+    $("bench-stamp").textContent = "model × harness × effort";
+    return;
+  }
+  const latest = runs[0];
+  $("bench-stamp").textContent = latest.recorded_at.slice(0, 19).replace("T", " ") + " UTC";
+  const table = document.createElement("table");
+  table.className = "bench-table";
+  const head = table.insertRow();
+  for (const [, label] of BENCH_COLS) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    head.appendChild(th);
+  }
+  latest.summary.forEach((row, i) => {
+    const tr = table.insertRow();
+    if (row.arm === "heuristic") tr.className = "control";
+    else if (i === 0) tr.className = "winner";
+    for (const [key] of BENCH_COLS) {
+      const td = tr.insertCell();
+      td.textContent = row[key];
+    }
+  });
+  body.replaceChildren(table);
+}
+
 /* ── mode switching ── */
 function setMode(mode) {
   state.mode = mode;
   $("btn-live").classList.toggle("active", mode === "live");
   $("btn-replay").classList.toggle("active", mode === "replay");
+  $("btn-bench").classList.toggle("active", mode === "bench");
   $("shelf").classList.toggle("hidden", mode !== "replay");
   $("replay-deck").classList.toggle("hidden", mode !== "replay");
+  $("bench-panel").classList.toggle("hidden", mode !== "bench");
   $("lcd-notice").classList.remove("hidden");
   resetHud();
   if (mode === "replay") { setPlaying(false); loadShelf(); }
+  else if (mode === "bench") { setPlaying(false); loadBench(); }
   else connectLive();
 }
 
+const MODES = ["live", "replay", "bench"];
 $("btn-live").onclick = () => setMode("live");
 $("btn-replay").onclick = () => setMode("replay");
-$("pad-select").onclick = () => setMode(state.mode === "live" ? "replay" : "live");
+$("btn-bench").onclick = () => setMode("bench");
+$("pad-select").onclick = () => setMode(MODES[(MODES.indexOf(state.mode) + 1) % MODES.length]);
 $("pad-start").onclick = () => state.run && setPlaying(!state.playing);
 $("t-play").onclick = () => state.run && setPlaying(!state.playing);
 $("t-speed").onclick = cycleSpeed;

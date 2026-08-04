@@ -75,3 +75,25 @@ def test_live_streamer_survives_unreachable_viewer():
     streamer.send_frame(1, b"\x89PNG fake")
     streamer.send_event({"event_type": "piece_spawn"})
     streamer.close()  # no exception = pass
+
+
+def test_benchmarks_endpoint_returns_newest_first(tmp_path, monkeypatch):
+    bench = tmp_path / "data" / "benchmarks"
+    bench.mkdir(parents=True)
+    (bench / "benchmark-20260803-100000.json").write_text(
+        json.dumps({"recorded_at": "2026-08-03T10:00:00+00:00", "summary": [{"arm": "old"}]})
+    )
+    (bench / "benchmark-20260803-120000.json").write_text(
+        json.dumps({"recorded_at": "2026-08-03T12:00:00+00:00", "summary": [{"arm": "new"}]})
+    )
+    (bench / "benchmark-20260803-130000.json").write_text("{broken")
+    monkeypatch.chdir(tmp_path)
+    client = TestClient(create_app(tmp_path / "runs"))
+    runs = client.get("/api/benchmarks").json()
+    assert [r["summary"][0]["arm"] for r in runs] == ["new", "old"]  # corrupt file skipped
+
+
+def test_benchmarks_endpoint_empty_without_results(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    assert client.get("/api/benchmarks").json() == []

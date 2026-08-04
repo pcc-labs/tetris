@@ -102,6 +102,27 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
             raise HTTPException(status_code=404, detail="frame not found")
         return FileResponse(path, media_type="image/png")
 
+    @app.get("/api/benchmarks")
+    async def list_benchmarks():
+        """Newest benchmark run first: its ranked summary rows."""
+        bench_dir = Path("data/benchmarks")
+        out = []
+        if bench_dir.exists():
+            for path in sorted(bench_dir.glob("benchmark-*.json"), reverse=True):
+                try:
+                    saved = json.loads(path.read_text())
+                except json.JSONDecodeError:
+                    logger.warning("unreadable benchmark %s", path)
+                    continue
+                out.append(
+                    {
+                        "id": path.stem,
+                        "recorded_at": saved.get("recorded_at", ""),
+                        "summary": saved.get("summary", []),
+                    }
+                )
+        return out
+
     @app.websocket("/ws/produce")
     async def ws_produce(ws: WebSocket):
         await ws.accept()

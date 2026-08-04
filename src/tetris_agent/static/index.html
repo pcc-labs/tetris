@@ -17,6 +17,7 @@
     <div class="mode-switch" role="tablist">
       <button id="btn-live" class="mode active" role="tab">LIVE</button>
       <button id="btn-replay" class="mode" role="tab">REPLAY</button>
+      <button id="btn-bench" class="mode" role="tab">BENCH</button>
     </div>
   </header>
 
@@ -97,6 +98,12 @@
       <div class="panel-head">CARTRIDGES <span class="dim">runs/</span></div>
       <div id="carts" class="carts"></div>
     </aside>
+
+    <!-- ══════════ BENCHMARK LEADERBOARD ══════════ -->
+    <section class="panel bench hidden" id="bench-panel" aria-label="Benchmark results">
+      <div class="panel-head">LEADERBOARD <span class="dim" id="bench-stamp">model × harness × effort</span></div>
+      <div id="bench-body" class="bench-body">loading…</div>
+    </section>
 
   </main>
 

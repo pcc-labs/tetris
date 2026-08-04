@@ -210,4 +210,19 @@ body {
 .cart .cart-meta { display: flex; justify-content: space-between; font-size: 9px; color: #8b93a5; padding-top: 6px; }
 .cart .cart-meta b { color: var(--phos); }
 
+/* ── benchmark leaderboard ── */
+.panel.bench { grid-column: 2 / -1; border-top-color: var(--magenta); }
+.bench-body { overflow-x: auto; font-size: 11px; }
+.bench-table { border-collapse: collapse; width: 100%; min-width: 620px; }
+.bench-table th {
+  text-align: left; padding: 8px 10px; font-family: var(--pixel); font-size: 8px;
+  color: var(--dim); letter-spacing: 1px; border-bottom: 1px solid #2c313c; white-space: nowrap;
+}
+.bench-table td { padding: 8px 10px; border-bottom: 1px dashed #232830; color: #9aa3b2; white-space: nowrap; }
+.bench-table td:first-child { color: var(--ink); }
+.bench-table tr.winner td { color: var(--phos); }
+.bench-table tr.winner td:first-child::after { content: " ★"; color: var(--phos); }
+.bench-table tr.control td { color: var(--amber); }
+.bench-table tr.control td:first-child::after { content: " (control)"; font-size: 9px; color: var(--dim); }
+
 .benchfoot { display: flex; justify-content: space-between; padding-top: 22px; font-size: 10px; color: var(--dim); letter-spacing: 1px; }
