@@ -1,10 +1,63 @@
 # tetris-agent
 
-A self-healing Game Boy Tetris agent — the pokemon-kafka paradigms rebuilt clean.
+A benchmark harness for **model × harness × effort** on Game Boy Tetris, with a
+self-healing heuristic as the control arm.
 
-The agent plays Tetris (World, Rev 1) headless through PyBoy, and its playing
-strength is a **genome** of evaluation weights that the system tunes itself
-through three healing loops:
+The question it answers: given a model, a way of presenting the game to it, and
+a reasoning-effort setting, how well does it actually play — and what does that
+cost? Tetris is a good testbed because the piece sequence is deterministic
+(`timer_div` pins the RNG), so every arm plays the *same* game and differences
+in score are differences in play rather than luck.
+
+## The three axes
+
+| Axis | Values |
+|---|---|
+| **Model** | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5` |
+| **Effort** | `low`, `medium`, `high`, `xhigh`, `max` — Haiku 4.5 rejects the parameter, so its arms run effort-free |
+| **Harness** | `board`, `legal`, `features`, `chat` |
+
+The harness is the interesting axis — it is how much of the reasoning is done
+*for* the model before it decides:
+
+- **`board`** — ASCII board, current piece, next piece. The model derives
+  legality and consequences itself.
+- **`legal`** — plus the enumerated legal `(rotation, col)` placements.
+- **`features`** — plus the resulting holes, height, bumpiness, and line clears
+  for each placement. The model gets the heuristic's inputs but must weigh them.
+- **`chat`** — like `board`, but conversation history carries across pieces, so
+  the model can pursue a plan (and pays for the growing context).
+
+The **`heuristic`** arm runs the weighted one-piece search in `policy.py`: no
+model, no cost, no latency. It is the number every model arm is measured against.
+
+```bash
+# Project the spend without calling anything
+uv run tetris-bench --models claude-opus-5 claude-haiku-4-5 \
+                    --harnesses board features --efforts medium \
+                    --max-pieces 30 --estimate
+
+# Run it, with a hard budget cap
+uv run tetris-bench --models claude-opus-5 --harnesses features \
+                    --efforts low high --max-usd 2.00
+
+# Watch one model play in the browser
+uv run tetris-agent --policy model --model claude-opus-5 --harness features --live
+```
+
+Cost is a first-class result column, not an afterthought: the static system
+prompt is cached, every run reports tokens, dollars, and latency, `--estimate`
+projects spend before you commit, and `--max-usd` aborts the matrix rather than
+letting you find the bill afterwards. One API call per piece adds up fast.
+
+Results land in `data/benchmarks/` and print as a ranked table. Model arms also
+report `illegal` — placements the model proposed that don't fit — which is a
+useful capability signal on its own, separate from score.
+
+## Self-healing
+
+The heuristic control arm is itself tuned by the system. Its playing strength is
+a **genome** of evaluation weights, adjusted through three healing loops:
 
 ```
                  ┌────────────────────────────────────────────────┐
