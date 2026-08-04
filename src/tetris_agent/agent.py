@@ -6,7 +6,7 @@ from tetris_agent.board import features
 from tetris_agent.controller import Controller
 from tetris_agent.events import EventCollector
 from tetris_agent.fitness import FitnessTracker
-from tetris_agent.policy import Genome, plan_placement
+from tetris_agent.policy import Genome, HeuristicPolicy, Policy
 from tetris_agent.recorder import RunRecorder
 from tetris_agent.state import read_state
 
@@ -41,9 +41,11 @@ class TetrisAgent:
         recorder: RunRecorder | None = None,
         max_pieces: int = 300,
         frame_sinks: list | None = None,
+        policy: Policy | None = None,
     ):
         self.emu = emu
         self.genome = genome
+        self.policy = policy or HeuristicPolicy(genome)
         self.collector = collector
         self.recorder = recorder
         self.max_pieces = max_pieces
@@ -61,7 +63,10 @@ class TetrisAgent:
 
     def run(self, timer_div: int | None = None) -> dict:
         self.emu.start(timer_div=timer_div)
-        self.collector.session("start", {"genome": self.genome.to_params(), "timer_div": timer_div})
+        self.collector.session(
+            "start",
+            {"genome": self.genome.to_params(), "timer_div": timer_div, "policy": self.policy.name},
+        )
         tracker = FitnessTracker()
         controller = Controller(self.emu, ticks_per_press=self.genome.ticks_per_press)
 
@@ -74,13 +79,15 @@ class TetrisAgent:
             if state.game_over:
                 tracker.on_game_over()
                 break
-            placement = plan_placement(state.board, state.falling.name, self.genome)
+            placement = self.policy.plan(
+                state.board, state.falling.name, state.next_piece, self.collector.turn + 1
+            )
             if placement is None:
                 self.collector.stuck(streak=0, detail="no placement fits (top-out imminent)")
                 tracker.on_game_over()
                 break
             self.collector.spawn(state.falling.name, state.next_piece)
-            self.collector.decision(placement)
+            self.collector.decision(placement, reason=getattr(self.policy, "last_reason", ""))
             self._capture_frame()
             result = controller.execute(placement)
             post = read_state(self.emu)
@@ -99,6 +106,7 @@ class TetrisAgent:
                 break
 
         fitness = tracker.compute(score=self.emu.score, lines=self.emu.lines, level=self.emu.level)
+        fitness["policy"] = self.policy.stats()
         self.collector.game_over(fitness)
         self.collector.session("end", {"fitness": fitness})
         if self.recorder is not None:

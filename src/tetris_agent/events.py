@@ -27,8 +27,11 @@ def build_spawn_event(turn: int, piece: str, next_piece: str) -> dict:
     return _envelope("piece_spawn", turn, {"piece": piece, "next_piece": next_piece})
 
 
-def build_decision_event(turn: int, placement: Placement) -> dict:
-    return _envelope("placement_decision", turn, asdict(placement))
+def build_decision_event(turn: int, placement: Placement, reason: str = "") -> dict:
+    data = asdict(placement)
+    if reason:
+        data["reason"] = reason
+    return _envelope("placement_decision", turn, data)
 
 
 def build_locked_event(turn: int, lines_delta: int, features: Features, misexec: int, score: int = 0) -> dict:
@@ -59,8 +62,8 @@ class EventCollector:
         self.turn += 1
         self.publisher.publish(build_spawn_event(self.turn, piece, next_piece))
 
-    def decision(self, placement: Placement) -> None:
-        self.publisher.publish(build_decision_event(self.turn, placement))
+    def decision(self, placement: Placement, reason: str = "") -> None:
+        self.publisher.publish(build_decision_event(self.turn, placement, reason))
 
     def locked(self, lines_delta: int, features: Features, misexec: int, score: int = 0) -> None:
         self.publisher.publish(build_locked_event(self.turn, lines_delta, features, misexec, score))

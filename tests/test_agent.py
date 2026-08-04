@@ -63,3 +63,19 @@ def test_build_config_live_flag():
     cfg = build_config(["--live"])
     assert cfg.live is True
     assert build_config([]).live is False
+
+
+def test_build_config_policy_defaults_and_overrides():
+    cfg = build_config([])
+    assert cfg.policy == "heuristic"
+    assert cfg.harness == "features"
+    cfg = build_config(["--policy", "model", "--model", "claude-sonnet-5", "--harness", "board", "--effort", "low"])
+    assert (cfg.policy, cfg.model, cfg.harness, cfg.effort) == ("model", "claude-sonnet-5", "board", "low")
+
+
+def test_build_policy_returns_heuristic_without_touching_the_api():
+    from tetris_agent.cli import build_policy
+
+    policy = build_policy(build_config([]))
+    assert policy.name == "heuristic"
+    assert policy.stats()["cost_usd"] == 0.0

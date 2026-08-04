@@ -7,6 +7,9 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
+from tetris_agent.pricing import EFFORTS
+from tetris_agent.prompts import HARNESSES
+
 DEFAULT_FITNESS_PATH = "data/last_fitness.json"
 
 
@@ -25,6 +28,10 @@ class Config:
     window: str
     live: bool
     viewer_url: str
+    policy: str
+    model: str
+    harness: str
+    effort: str
 
 
 def build_config(argv=None) -> Config:
@@ -44,7 +51,22 @@ def build_config(argv=None) -> Config:
         "--live", action="store_true", help="real-time speed + stream frames/events to the browser viewer"
     )
     parser.add_argument("--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --live")
+    parser.add_argument("--policy", default="heuristic", choices=["heuristic", "model"])
+    parser.add_argument("--model", default="claude-opus-5", help="model id when --policy model")
+    parser.add_argument("--harness", default="features", choices=list(HARNESSES))
+    parser.add_argument("--effort", default="medium", choices=list(EFFORTS))
     return Config(**vars(parser.parse_args(argv)))
+
+
+def build_policy(cfg: Config):
+    from tetris_agent.genome import load_params
+    from tetris_agent.policy import Genome, HeuristicPolicy
+
+    if cfg.policy == "heuristic":
+        return HeuristicPolicy(Genome.from_params(load_params()))
+    from tetris_agent.model_policy import ModelPolicy
+
+    return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort)
 
 
 def agent_main(argv=None) -> int:
@@ -78,7 +100,7 @@ def agent_main(argv=None) -> int:
     try:
         agent = TetrisAgent(
             emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces,
-            frame_sinks=frame_sinks,
+            frame_sinks=frame_sinks, policy=build_policy(cfg),
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
