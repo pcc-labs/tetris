@@ -1,6 +1,11 @@
-"""Placement search weighted by the genome the healer tunes."""
+"""Placement policies: the heuristic control arm and the Policy contract.
+
+A Policy is the benchmark's unit of comparison — the heuristic search here is
+the control against which model-driven policies (model_policy.py) are scored.
+"""
 
 from dataclasses import dataclass, fields
+from typing import Protocol
 
 import numpy as np
 
@@ -58,3 +63,27 @@ def plan_placement(board: np.ndarray, piece: str, genome: Genome) -> Placement |
                 best_key = key
                 best = Placement(rotation=rot, col=col, score=score)
     return best
+
+
+class Policy(Protocol):
+    """Chooses where each piece lands. The benchmark's unit of comparison."""
+
+    name: str
+
+    def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None: ...
+
+    def stats(self) -> dict: ...
+
+
+class HeuristicPolicy:
+    """Control arm: weighted one-piece search. No model, no cost, no latency."""
+
+    def __init__(self, genome: Genome | None = None):
+        self.genome = genome or Genome()
+        self.name = "heuristic"
+
+    def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
+        return plan_placement(board, piece, self.genome)
+
+    def stats(self) -> dict:
+        return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}
