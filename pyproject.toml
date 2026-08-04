@@ -16,6 +16,7 @@ dependencies = [
 tetris-agent = "tetris_agent.cli:agent_main"
 tetris-healer = "tetris_agent.cli:healer_main"
 tetris-discovery = "tetris_agent.cli:discovery_main"
+tetris-viewer = "tetris_agent.viewer:main"
 
 [dependency-groups]
 dev = [

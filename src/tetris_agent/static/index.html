@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRAMBOY · tetris-agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="bench">
+
+  <header class="masthead">
+    <h1>GRAMBOY<span class="rev">·DMG·01</span></h1>
+    <p class="sub">SELF-HEALING TETRIS AGENT — BENCH VIEWER</p>
+    <div class="mode-switch" role="tablist">
+      <button id="btn-live" class="mode active" role="tab">LIVE</button>
+      <button id="btn-replay" class="mode" role="tab">REPLAY</button>
+    </div>
+  </header>
+
+  <main class="stage">
+
+    <!-- ══════════ THE DEVICE ══════════ -->
+    <section class="gameboy" aria-label="Game Boy">
+      <div class="cart-slot"></div>
+      <div class="shell">
+        <div class="shell-topline"><span></span><span></span></div>
+
+        <div class="bezel">
+          <div class="bezel-caption">DOT MATRIX · SELF-HEALING AGENT</div>
+          <div class="bezel-stripe"><i class="s1"></i><i class="s2"></i></div>
+          <div class="led-row">
+            <span id="power-led" class="led"></span>
+            <span class="led-label">BATTERY</span>
+          </div>
+          <div class="lcd">
+            <canvas id="screen" width="160" height="144"></canvas>
+            <div id="lcd-notice" class="lcd-notice">INSERT CARTRIDGE<br>OR GO LIVE</div>
+          </div>
+        </div>
+
+        <div class="brand">Paper·Compute<span class="brand-tm">GRAMBOY</span></div>
+
+        <div class="controls-zone">
+          <div class="dpad">
+            <span class="dpad-v"></span><span class="dpad-h"></span><span class="dpad-pivot"></span>
+          </div>
+          <div class="ab">
+            <button class="btn-round" id="pad-b" title="slower">B</button>
+            <button class="btn-round" id="pad-a" title="faster">A</button>
+          </div>
+        </div>
+
+        <div class="pills">
+          <button class="pill" id="pad-select" title="switch mode">SELECT</button>
+          <button class="pill" id="pad-start" title="play / pause">START</button>
+        </div>
+
+        <div class="speaker">
+          <i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+      <div class="shell-shadow"></div>
+    </section>
+
+    <!-- ══════════ BENCH TELEMETRY ══════════ -->
+    <section class="panel" aria-label="Telemetry">
+      <div class="panel-head">TELEMETRY <span id="feed-state" class="feed-state">IDLE</span></div>
+
+      <div class="readouts">
+        <div class="readout"><label>SCORE</label><output id="r-score">000000</output></div>
+        <div class="readout"><label>LINES</label><output id="r-lines">0000</output></div>
+        <div class="readout"><label>LEVEL</label><output id="r-level">00</output></div>
+        <div class="readout"><label>PIECE</label><output id="r-piece">0000</output></div>
+        <div class="readout"><label>HOLES</label><output id="r-holes">00</output></div>
+        <div class="readout"><label>MISEXEC</label><output id="r-misexec">00</output></div>
+      </div>
+
+      <div class="panel-head small">EVENT BUS <span class="dim">tetris.game.v1</span></div>
+      <ul id="ticker" class="ticker"></ul>
+
+      <div id="replay-deck" class="replay-deck hidden">
+        <div class="panel-head small">TRANSPORT</div>
+        <div class="transport">
+          <button id="t-play" class="t-btn">▶</button>
+          <input id="t-scrub" type="range" min="0" max="0" value="0">
+          <span id="t-frame" class="t-frame">0/0</span>
+          <button id="t-speed" class="t-btn t-speed">1×</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════ CARTRIDGE SHELF ══════════ -->
+    <aside class="shelf hidden" id="shelf" aria-label="Recorded runs">
+      <div class="panel-head">CARTRIDGES <span class="dim">runs/</span></div>
+      <div id="carts" class="carts"></div>
+    </aside>
+
+  </main>
+
+  <footer class="benchfoot">
+    <span id="ws-status">ws: disconnected</span>
+    <span>fitness → healer → race → genome</span>
+  </footer>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

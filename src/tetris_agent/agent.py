@@ -86,7 +86,7 @@ class TetrisAgent:
             post = read_state(self.emu)
             f = features(post.board)
             tracker.on_lock(f, result.misexec)
-            self.collector.locked(result.lines_delta, f, result.misexec)
+            self.collector.locked(result.lines_delta, f, result.misexec, score=self.emu.score)
             self._capture_frame()
             placed += 1
             if result.replanned:

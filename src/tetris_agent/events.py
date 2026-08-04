@@ -31,8 +31,10 @@ def build_decision_event(turn: int, placement: Placement) -> dict:
     return _envelope("placement_decision", turn, asdict(placement))
 
 
-def build_locked_event(turn: int, lines_delta: int, features: Features, misexec: int) -> dict:
-    return _envelope("piece_locked", turn, {"lines_delta": lines_delta, "misexec": misexec, **asdict(features)})
+def build_locked_event(turn: int, lines_delta: int, features: Features, misexec: int, score: int = 0) -> dict:
+    return _envelope(
+        "piece_locked", turn, {"lines_delta": lines_delta, "misexec": misexec, "score": score, **asdict(features)}
+    )
 
 
 def build_stuck_event(turn: int, streak: int, detail: str) -> dict:
@@ -60,8 +62,8 @@ class EventCollector:
     def decision(self, placement: Placement) -> None:
         self.publisher.publish(build_decision_event(self.turn, placement))
 
-    def locked(self, lines_delta: int, features: Features, misexec: int) -> None:
-        self.publisher.publish(build_locked_event(self.turn, lines_delta, features, misexec))
+    def locked(self, lines_delta: int, features: Features, misexec: int, score: int = 0) -> None:
+        self.publisher.publish(build_locked_event(self.turn, lines_delta, features, misexec, score))
 
     def stuck(self, streak: int, detail: str) -> None:
         self.publisher.publish(build_stuck_event(self.turn, streak, detail))
