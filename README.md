@@ -1,5 +1,8 @@
 # tetris-agent
 
+<img width="934" height="572" alt="Screenshot 2026-08-03 at 5 54 25 PM" src="https://github.com/user-attachments/assets/da0b47fb-5cc3-4c3d-b18b-4134dbb87d4b" />
+
+
 A benchmark harness for **model × harness × effort** on Game Boy Tetris, with a
 self-healing heuristic as the control arm.
 
