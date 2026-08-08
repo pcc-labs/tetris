@@ -75,6 +75,27 @@ Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`
 `ollama list` works. pi arms cost $0 but not zero time — a 20B-class decision
 can take tens of seconds, so keep `--max-pieces` modest in pi-heavy matrices.
 
+### What these arms need to run
+
+Open-weight arms are free in dollars and expensive in everything else. Budget
+for all three before starting a matrix:
+
+| | measured |
+|---|---|
+| Resident memory | `qwen3:8b` holds **~10 GB** while loaded |
+| Wall clock | **~40 s per decision** on an idle machine — 50 pieces is over half an hour for one seed |
+| Contention | sharing the machine with another benchmark roughly doubles that |
+
+The memory figure is the one that bites. On a box already under pressure the
+run does not fail loudly — it gets OOM-killed after ten minutes having printed
+nothing, because progress is only reported once an arm finishes. A dedicated
+sandbox is the right way to run these, but size it for the model: a 4 GB
+instance cannot host an 8B model, whatever else it has going for it.
+
+`tetris-bench` preflights any `pi/` arm before it starts — Ollama reachable,
+model actually pulled, model small enough for the box — and refuses in seconds
+rather than failing in silence. `--skip-preflight` overrides it.
+
 The delta is deliberate: pi is part of the harness under measurement. It has no
 structured-output mode, so the placement JSON is prompt-instructed and parsed
 leniently; `parse_failures` and `illegal` in the results are capability signals

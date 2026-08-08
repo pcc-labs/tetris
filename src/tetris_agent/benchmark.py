@@ -236,7 +236,19 @@ def main(argv=None) -> int:
     parser.add_argument("--max-usd", type=float, default=5.0, help="abort the matrix once spend reaches this")
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
     parser.add_argument("--estimate", action="store_true", help="print a cost projection and exit")
+    parser.add_argument("--skip-preflight", action="store_true", help="run pi arms without checking Ollama first")
     args = parser.parse_args(argv)
+
+    if not args.skip_preflight and any(is_pi(m) for m in args.models):
+        from tetris_agent.pi_policy import preflight
+
+        problems = preflight(args.models)
+        if problems:
+            print("pi arms cannot run:")
+            for problem in problems:
+                print(f"  - {problem}")
+            print("\n(--skip-preflight to try anyway)")
+            return 1
 
     arms = expand_arms(args.models, args.harnesses, args.efforts, include_control=not args.no_control)
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
