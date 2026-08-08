@@ -11,3 +11,4 @@ rom/*.gb
 dist/
 .worktrees/
 .DS_Store
+.claude/plans/
