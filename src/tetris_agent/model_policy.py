@@ -4,6 +4,10 @@ This is the benchmark's subject. The model sees the board through a harness
 (how much scaffolding it gets) and answers with a structured placement; the
 policy validates that answer against the legal set, retries once on an illegal
 one, and accounts for every token, dollar, and millisecond it spent.
+
+`LLMPlacementPolicy` holds everything provider-agnostic (validate, retry,
+chat history, accounting); a subclass supplies `_call`, which turns a message
+list into a `{"rotation", "col", "reason"}` dict or None on failure.
 """
 
 import json
@@ -28,13 +32,12 @@ MAX_TOKENS = 8192
 CHAT_HISTORY_TURNS = 12  # kept pairs in the `chat` harness before trimming
 
 
-class ModelPolicy:
+class LLMPlacementPolicy:
     def __init__(
         self,
         model: str,
         harness: str = "features",
         effort: str | None = "medium",
-        client=None,
         max_tokens: int = MAX_TOKENS,
     ):
         self.model = model
@@ -42,7 +45,6 @@ class ModelPolicy:
         self.spec = spec(model)
         # Haiku 4.5 rejects output_config.effort; its arms are effort-free by construction.
         self.effort = effort if self.spec.supports_effort else None
-        self.client = client or anthropic.Anthropic()
         self.max_tokens = max_tokens
         self.name = f"{model}/{harness}" + (f"/{self.effort}" if self.effort else "")
         self._history: list[dict] = []
@@ -130,6 +132,31 @@ class ModelPolicy:
         return None
 
     def _call(self, messages: list[dict]) -> dict | None:
+        """Return {"rotation", "col", "reason"} or None; account usage/latency/errors."""
+        raise NotImplementedError
+
+    def _remember(self, prompt: str, answer: dict) -> None:
+        if self.harness != "chat":
+            return
+        self._history.append({"role": "user", "content": prompt})
+        self._history.append({"role": "assistant", "content": json.dumps(answer)})
+        if len(self._history) > CHAT_HISTORY_TURNS * 2:
+            self._history = self._history[-CHAT_HISTORY_TURNS * 2 :]
+
+
+class ModelPolicy(LLMPlacementPolicy):
+    def __init__(
+        self,
+        model: str,
+        harness: str = "features",
+        effort: str | None = "medium",
+        client=None,
+        max_tokens: int = MAX_TOKENS,
+    ):
+        super().__init__(model, harness, effort, max_tokens)
+        self.client = client or anthropic.Anthropic()
+
+    def _call(self, messages: list[dict]) -> dict | None:
         output_config: dict = {"format": {"type": "json_schema", "schema": PLACEMENT_SCHEMA}}
         if self.effort:
             output_config["effort"] = self.effort
@@ -171,11 +198,3 @@ class ModelPolicy:
         self.usage["output_tokens"] += getattr(usage, "output_tokens", 0) or 0
         self.usage["cache_read_tokens"] += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.usage["cache_write_tokens"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
-
-    def _remember(self, prompt: str, answer: dict) -> None:
-        if self.harness != "chat":
-            return
-        self._history.append({"role": "user", "content": prompt})
-        self._history.append({"role": "assistant", "content": json.dumps(answer)})
-        if len(self._history) > CHAT_HISTORY_TURNS * 2:
-            self._history = self._history[-CHAT_HISTORY_TURNS * 2 :]

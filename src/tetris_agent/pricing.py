@@ -16,6 +16,10 @@ class ModelSpec:
     cache_min_tokens: int
 
 
+# `pi/<ollama-model>` arms run through the pi agent against local Ollama: free,
+# and supports_effort mirrors whether the model accepts pi's --thinking flag.
+PI_PREFIX = "pi/"
+
 MODELS: dict[str, ModelSpec] = {
     "claude-fable-5": ModelSpec("claude-fable-5", 10.0, 50.0, True, 512),
     "claude-opus-5": ModelSpec("claude-opus-5", 5.0, 25.0, True, 512),
@@ -23,15 +27,28 @@ MODELS: dict[str, ModelSpec] = {
     "claude-sonnet-5": ModelSpec("claude-sonnet-5", 2.0, 10.0, True, 1024),
     # Haiku 4.5 rejects output_config.effort — its arms run effort-free.
     "claude-haiku-4-5": ModelSpec("claude-haiku-4-5", 1.0, 5.0, False, 4096),
+    "pi/gpt-oss:20b": ModelSpec("pi/gpt-oss:20b", 0.0, 0.0, True, 0),
+    "pi/glm-4.7-flash": ModelSpec("pi/glm-4.7-flash", 0.0, 0.0, True, 0),
+    "pi/qwen3.6:27b": ModelSpec("pi/qwen3.6:27b", 0.0, 0.0, True, 0),
+    "pi/qwen3:8b": ModelSpec("pi/qwen3:8b", 0.0, 0.0, False, 0),
+    "pi/gemma3": ModelSpec("pi/gemma3", 0.0, 0.0, False, 0),
 }
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
+def is_pi(model_id: str) -> bool:
+    return model_id.startswith(PI_PREFIX)
+
+
 def spec(model_id: str) -> ModelSpec:
-    if model_id not in MODELS:
-        raise KeyError(f"unknown model {model_id!r}; known: {sorted(MODELS)}")
-    return MODELS[model_id]
+    if model_id in MODELS:
+        return MODELS[model_id]
+    if is_pi(model_id):
+        # Unlisted local model: free, and effort-free so we never send
+        # --thinking to a model we don't know accepts it.
+        return ModelSpec(model_id, 0.0, 0.0, False, 0)
+    raise KeyError(f"unknown model {model_id!r}; known: {sorted(MODELS)}")
 
 
 def cost_usd(

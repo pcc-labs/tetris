@@ -16,7 +16,7 @@ in score are differences in play rather than luck.
 
 | Axis | Values |
 |---|---|
-| **Model** | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5` |
+| **Model** | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, plus `pi/<ollama-model>` open-weight arms (see below) |
 | **Effort** | `low`, `medium`, `high`, `xhigh`, `max` — Haiku 4.5 rejects the parameter, so its arms run effort-free |
 | **Harness** | `board`, `legal`, `features`, `chat` |
 
@@ -56,6 +56,29 @@ letting you find the bill afterwards. One API call per piece adds up fast.
 Results land in `data/benchmarks/` and print as a ranked table. Model arms also
 report `illegal` — placements the model proposed that don't fit — which is a
 useful capability signal on its own, separate from score.
+
+## Open-weight arms (pi + Ollama)
+
+Model ids prefixed `pi/` run through the [pi coding agent](https://github.com/earendil-works/pi-mono)
+(tested against v0.80.10) driving a local Ollama model — one `pi -p --mode json`
+subprocess per piece:
+
+```bash
+uv run tetris-bench --models claude-haiku-4-5 pi/gpt-oss:20b \
+                    --harnesses features --efforts medium --max-pieces 10
+```
+
+Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`
+(thinking-capable — effort maps onto pi's `--thinking` level verbatim) and
+`pi/qwen3:8b`, `pi/gemma3` (effort-free, they collapse like Haiku). Any other
+`pi/<model>` id is accepted as a free, effort-free arm, so anything in
+`ollama list` works. pi arms cost $0 but not zero time — a 20B-class decision
+can take tens of seconds, so keep `--max-pieces` modest in pi-heavy matrices.
+
+The delta is deliberate: pi is part of the harness under measurement. It has no
+structured-output mode, so the placement JSON is prompt-instructed and parsed
+leniently; `parse_failures` and `illegal` in the results are capability signals
+for the open-weight arms just like they are for the Claude ones.
 
 ## Self-healing
 
@@ -139,14 +162,37 @@ broker-free: a bridge process (see pokemon-kafka's `docker/game-event-bridge`)
 can tail these files into Kafka without the agent knowing. Recorded runs land
 in `runs/<id>/` with `events.jsonl` and `summary.json` (the healer's input).
 
-## Session capture
+## Session capture (tapes)
 
-Agent-session traces are captured by **paperd** (the Paper gateway), not by
-anything in this repo. Gameplay itself makes no LLM calls — the only LLM
-sessions here are discovery's `claude -p` proposals, and that subprocess
-inherits the environment, so running from a paper-gatewayed shell routes its
-traces through paperd automatically. Game telemetry is separate: JSONL events
-under `data/telemetry/` and recorded runs under `runs/`.
+Benchmark LLM traffic is captured locally by **[tapes](https://docs.tapes.dev)**,
+keeping benchmark noise out of the Paper org. One script brings up the whole
+capture stack — two single-provider proxies, the read API (:8081), and the
+derive worker (the proxies sit on :8091/:8092 because pi's `mlx` provider
+already owns :8080):
+
+```bash
+tapes local up            # once: Postgres (+ Ollama embeddings) in Docker
+./scripts/tapes-up.sh     # proxies + API + derive worker; Ctrl-C tears down
+```
+
+Then, in the shell that runs the benchmark:
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8091          # Claude arms
+export TETRIS_TAPES_OLLAMA_URL=http://127.0.0.1:8092/v1  # pi arms
+```
+
+The Anthropic SDK honors `ANTHROPIC_BASE_URL` natively; pi arms pick up
+`TETRIS_TAPES_OLLAMA_URL` through the bundled extension
+(`src/tetris_agent/pi_extension/tapes-proxy.ts`), which reroutes pi's ollama
+provider through the capture proxy. Unset either var and that side simply runs
+uncaptured. Read back what was captured with
+`tapesctl sessions list --tapes-url http://localhost:8081`.
+
+When sessions *should* land in the Paper org instead — real work, not
+benchmark noise — run from a paper-gatewayed shell (`paper start`) without the
+exports above. Game telemetry is separate either way: JSONL events under
+`data/telemetry/` and recorded runs under `runs/`.
 
 ## How this differs from pokemon-kafka
 
