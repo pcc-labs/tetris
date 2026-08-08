@@ -259,3 +259,54 @@ def test_brace_inside_a_string_value_does_not_break_extraction():
     assert (placement.rotation, placement.col) == (0, 3)
     assert p.last_reason == "fills the } notch"
     assert p.usage["parse_failures"] == 0
+
+
+def test_preflight_is_a_noop_without_pi_arms():
+    from tetris_agent.pi_policy import preflight
+
+    assert preflight(["claude-opus-5", "claude-haiku-4-5"]) == []
+
+
+def test_preflight_reports_an_unreachable_ollama_once():
+    from tetris_agent.pi_policy import preflight
+
+    problems = preflight(["pi/qwen3:8b", "pi/gemma3"], base_url="http://127.0.0.1:9")
+    assert len(problems) == 1
+    assert "unreachable" in problems[0]
+
+
+def test_preflight_names_the_models_that_are_not_pulled(monkeypatch):
+    import tetris_agent.pi_policy as mod
+
+    monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"gemma3:latest": 3_300_000_000})
+    problems = mod.preflight(["pi/qwen3:8b", "pi/gemma3"])
+    # gemma3 resolves through the implicit :latest tag; qwen3:8b genuinely isn't there.
+    assert len(problems) == 1
+    assert "qwen3:8b" in problems[0] and "ollama pull" in problems[0]
+
+
+def test_preflight_rejects_a_model_too_big_for_the_box(monkeypatch):
+    import tetris_agent.pi_policy as mod
+
+    # The walkman case: a 4 GB sandbox and a model that needs 5.2 GB resident.
+    monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"qwen3:8b": 5_200_000_000})
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: 4_000_000_000)
+    problems = mod.preflight(["pi/qwen3:8b"])
+    assert len(problems) == 1
+    assert "OOM-killed" in problems[0] and "4.0 GB RAM" in problems[0]
+
+
+def test_preflight_passes_when_the_model_fits(monkeypatch):
+    import tetris_agent.pi_policy as mod
+
+    monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"qwen3:8b": 5_200_000_000})
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: 64_000_000_000)
+    assert mod.preflight(["pi/qwen3:8b"]) == []
+
+
+def test_preflight_cannot_judge_size_without_a_ram_reading(monkeypatch):
+    import tetris_agent.pi_policy as mod
+
+    monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"qwen3:8b": 5_200_000_000})
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: None)
+    assert mod.preflight(["pi/qwen3:8b"]) == []  # unknown RAM must not block the run

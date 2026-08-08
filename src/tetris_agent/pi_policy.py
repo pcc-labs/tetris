@@ -12,6 +12,7 @@ a single prompt per call (no pi session files).
 
 import json
 import logging
+import os
 import subprocess
 import time
 from collections.abc import Callable
@@ -24,6 +25,13 @@ from tetris_agent.prompts import SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 180.0
+OLLAMA_URL = os.environ.get("TETRIS_OLLAMA_URL", "http://127.0.0.1:11434")
+# A model this large relative to total RAM will thrash or get OOM-killed rather
+# than run. Measured the hard way: an 8B model needing ~10 GB resident took a
+# machine into continuous swap and had its benchmark killed twice, silently,
+# after ten minutes of producing nothing.
+_WONT_FIT = 0.60
+_TIGHT = 0.25
 # Ships inside the package: reroutes pi's ollama provider through the tapes
 # capture proxy when TETRIS_TAPES_OLLAMA_URL is set, no-ops otherwise.
 TAPES_EXTENSION = Path(__file__).parent / "pi_extension" / "tapes-proxy.ts"
@@ -41,6 +49,74 @@ PI_JSON_INSTRUCTIONS = (
 PI_PROMPT_SUFFIX = (
     '\n\nAnswer with ONLY the JSON object, e.g. {"rotation": 0, "col": 4, "reason": "flat"} — nothing else.'
 )
+
+
+def _total_ram_bytes() -> int | None:
+    """Physical RAM, or None where the platform won't say."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, ValueError, OSError):
+        return None
+
+
+def _ollama_models(base_url: str = OLLAMA_URL, timeout_s: float = 3.0) -> dict[str, int] | None:
+    """Installed model name -> size in bytes, or None if Ollama isn't reachable."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=timeout_s) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+        return None
+    return {m["name"]: int(m.get("size") or 0) for m in payload.get("models", []) if m.get("name")}
+
+
+def _match(name: str, installed: dict[str, int]) -> int | None:
+    """Ollama reports `gemma3:latest`; an arm may just say `gemma3`."""
+    for candidate in (name, f"{name}:latest"):
+        if candidate in installed:
+            return installed[candidate]
+    return None
+
+
+def preflight(model_ids, base_url: str = OLLAMA_URL) -> list[str]:
+    """Reasons the pi arms in `model_ids` would fail — empty list means go.
+
+    Worth doing because every one of these fails *slowly*: an unreachable
+    Ollama or an unpulled model burns the per-decision timeout on all 50
+    pieces, and a model too big for the box gets OOM-killed with no error
+    anywhere. Seconds here saves tens of minutes of silence.
+    """
+    wanted = sorted({m.removeprefix(PI_PREFIX) for m in model_ids if m.startswith(PI_PREFIX)})
+    if not wanted:
+        return []
+
+    installed = _ollama_models(base_url)
+    if installed is None:
+        return [f"ollama unreachable at {base_url} — pi arms need it running (`ollama serve`)"]
+
+    problems = []
+    total_ram = _total_ram_bytes()
+    for name in wanted:
+        size = _match(name, installed)
+        if size is None:
+            have = ", ".join(sorted(installed)) or "nothing"
+            problems.append(f"{name!r} is not pulled — run `ollama pull {name}` (installed: {have})")
+            continue
+        if total_ram and size > total_ram * _WONT_FIT:
+            problems.append(
+                f"{name!r} needs ~{size / 1e9:.1f} GB but this box has {total_ram / 1e9:.1f} GB RAM — "
+                "it will thrash or be OOM-killed mid-run; use a larger machine or a smaller model"
+            )
+        elif total_ram and size > total_ram * _TIGHT:
+            logger.warning(
+                "%s needs ~%.1f GB of this box's %.1f GB — close other work or expect swapping",
+                name,
+                size / 1e9,
+                total_ram / 1e9,
+            )
+    return problems
 
 
 def _run_pi(cmd: list[str], timeout_s: float) -> subprocess.CompletedProcess:
