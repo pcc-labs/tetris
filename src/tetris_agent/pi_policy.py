@@ -55,8 +55,8 @@ def _run_pi(cmd: list[str], timeout_s: float) -> subprocess.CompletedProcess:
     )
 
 
-def _final_assistant_output(stdout: str) -> tuple[str | None, dict]:
-    """Text and usage of the last assistant message in a pi --mode json stream.
+def _final_assistant_output(stdout: str) -> tuple[str | None, dict, str | None]:
+    """Text, usage, and error of the last assistant message in a pi --mode json stream.
 
     Every assumption about pi's JSONL event shape lives here (pinned against
     v0.80.10): assistant turns arrive as
@@ -64,8 +64,16 @@ def _final_assistant_output(stdout: str) -> tuple[str | None, dict]:
      "content": [{"type": "text", "text": ...}, ...],
      "usage": {"input": .., "output": .., "cacheRead": .., "cacheWrite": ..}}}
     Unparseable lines are skipped so stray non-JSON output can't kill a run.
+
+    A provider failure (Ollama down, model not pulled, proxy misconfigured) does
+    not make pi exit nonzero — it reports `"stopReason": "error"` with an
+    `errorMessage` and an empty content list, so that has to be read out of the
+    stream or it masquerades as the model failing to produce JSON. pi retries
+    internally, so the *last* assistant message is the verdict: a retry that
+    eventually succeeded ends in a normal message, one that gave up ends in an
+    error.
     """
-    text, usage = None, {}
+    message: dict = {}
     for line in stdout.splitlines():
         try:
             event = json.loads(line)
@@ -73,32 +81,29 @@ def _final_assistant_output(stdout: str) -> tuple[str | None, dict]:
             continue
         if event.get("type") != "message_end":
             continue
-        message = event.get("message") or {}
-        if message.get("role") != "assistant":
-            continue
-        blocks = [b.get("text", "") for b in message.get("content", []) if b.get("type") == "text"]
-        if blocks:
-            text = "\n".join(blocks)
-            usage = message.get("usage") or {}
-    return text, usage
+        candidate = event.get("message") or {}
+        if candidate.get("role") == "assistant":
+            message = candidate
+
+    failed = message.get("stopReason") == "error"
+    error = (message.get("errorMessage") or "unknown error") if failed else None
+    blocks = [b.get("text", "") for b in message.get("content", []) if b.get("type") == "text"]
+    return ("\n".join(blocks) if blocks else None, message.get("usage") or {}, error)
 
 
 def _extract_json(text: str) -> dict | None:
-    """First balanced JSON object in the text, fences and prose tolerated."""
+    """First JSON object in the text, fences and prose tolerated.
+
+    Scans with the real decoder rather than counting braces, so a brace inside
+    a string value (`"reason": "fills the } notch"`) doesn't truncate the object.
+    """
+    decoder = json.JSONDecoder()
     start = text.find("{")
     while start != -1:
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(text[start : i + 1])
-                    except json.JSONDecodeError:
-                        break
-        start = text.find("{", start + 1)
+        try:
+            return decoder.raw_decode(text, start)[0]
+        except json.JSONDecodeError:
+            start = text.find("{", start + 1)
     return None
 
 
@@ -171,12 +176,18 @@ class PiPolicy(LLMPlacementPolicy):
             self.usage["api_errors"] += 1
             return None
 
-        text, usage = _final_assistant_output(proc.stdout)
-        self.usage["decisions"] += 1
+        text, usage, error = _final_assistant_output(proc.stdout)
         self.usage["input_tokens"] += usage.get("input", 0) or 0
         self.usage["output_tokens"] += usage.get("output", 0) or 0
         self.usage["cache_read_tokens"] += usage.get("cacheRead", 0) or 0
         self.usage["cache_write_tokens"] += usage.get("cacheWrite", 0) or 0
+        if error is not None:
+            # pi still exits 0 here; without this the arm's `parse_failures` and
+            # `illegal` would blame the model for a dead provider.
+            logger.warning("pi provider error for %s: %s", self.model, error)
+            self.usage["api_errors"] += 1
+            return None
+        self.usage["decisions"] += 1
 
         answer = _extract_json(text) if text else None
         if answer is None:

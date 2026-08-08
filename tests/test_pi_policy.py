@@ -204,3 +204,58 @@ def test_default_runner_closes_stdin():
 def test_pi_policy_rejects_non_pi_model():
     with pytest.raises(ValueError):
         PiPolicy(model="claude-opus-5", runner=FakeRunner([]))
+
+
+def provider_error_events(message="Connection error.", attempts=3):
+    """pi's real shape when the provider is unreachable: exit 0, empty content,
+    stopReason=error, repeated once per internal auto-retry."""
+    events = [{"type": "session", "version": 3, "id": "test"}]
+    for _ in range(attempts):
+        events += [
+            {"type": "agent_start"},
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                    "stopReason": "error",
+                    "errorMessage": message,
+                },
+            },
+        ]
+    events.append({"type": "auto_retry_end", "success": False, "finalError": message})
+    return "\n".join(json.dumps(e) for e in events) + "\n"
+
+
+def test_unreachable_provider_is_an_api_error_not_the_model_failing():
+    # pi exits 0 when Ollama is down; without reading stopReason this would be
+    # charged to the model as a parse failure and drag the arm's score down.
+    p = policy([completed(provider_error_events()), completed(provider_error_events())])
+    placement = p.plan(empty_board(), "O", "I", turn=1)
+    assert placement is not None  # deterministic fallback keeps the run alive
+    assert p.usage["api_errors"] == 1
+    assert p.usage["parse_failures"] == 0
+    assert p.usage["decisions"] == 0
+    # _decide gives up on the first None, so the second result is never consumed.
+    assert len(p.runner.calls) == 1
+
+
+def test_provider_error_followed_by_a_successful_retry_counts_as_a_decision():
+    # pi retries internally; the last assistant message is the verdict.
+    stdout = provider_error_events(attempts=2) + jsonl_events('{"rotation": 0, "col": 3, "reason": "recovered"}')
+    p = policy([completed(stdout)])
+    placement = p.plan(empty_board(), "O", "I", turn=1)
+    assert (placement.rotation, placement.col) == (0, 3)
+    assert p.usage["api_errors"] == 0
+    assert p.usage["decisions"] == 1
+    assert p.usage["input_tokens"] == 121  # usage taken from the winning message
+
+
+def test_brace_inside_a_string_value_does_not_break_extraction():
+    text = '{"rotation": 0, "col": 3, "reason": "fills the } notch"}'
+    p = policy([completed(jsonl_events(text))])
+    placement = p.plan(empty_board(), "O", "I", turn=1)
+    assert (placement.rotation, placement.col) == (0, 3)
+    assert p.last_reason == "fills the } notch"
+    assert p.usage["parse_failures"] == 0
