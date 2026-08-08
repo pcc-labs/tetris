@@ -26,13 +26,15 @@ class Emulator:
     def start(self, timer_div: int | None = None) -> None:
         self.game_wrapper.start_game(timer_div=timer_div)
 
-    def tick(self, n: int = 1) -> None:
-        self.pyboy.tick(n, True)
+    def tick(self, n: int = 1) -> bool:
+        """Advance n frames. False once the window is closed (manual play)."""
+        alive = self.pyboy.tick(n, True)
         if self.frame_hook is not None:
             self._ticks_since_frame += n
             if self._ticks_since_frame >= self._FRAME_HOOK_TICKS:
                 self._ticks_since_frame = 0
                 self.frame_hook()
+        return alive is not False
 
     def press(self, button: str, ticks_after: int = 4) -> None:
         self.pyboy.button(button)

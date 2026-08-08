@@ -19,6 +19,7 @@ tetris-healer = "tetris_agent.cli:healer_main"
 tetris-discovery = "tetris_agent.cli:discovery_main"
 tetris-viewer = "tetris_agent.viewer:main"
 tetris-bench = "tetris_agent.benchmark:main"
+tetris-manual = "tetris_agent.cli:manual_main"
 
 [dependency-groups]
 dev = [
