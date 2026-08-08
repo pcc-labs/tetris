@@ -143,3 +143,50 @@ def discovery_main(argv=None) -> int:
     from tetris_agent.discovery import main as _main
 
     return _main(argv)
+
+
+def manual_main(argv=None) -> int:
+    """Human baseline: play by hand, recorded as a benchmark arm."""
+    import argparse
+
+    from tetris_agent.benchmark import ArmResult, render_table, summarize, write_results
+    from tetris_agent.manual import play
+
+    parser = argparse.ArgumentParser(prog="tetris-manual", description="Play by hand to set a human baseline")
+    parser.add_argument("--rom", default="rom/tetris.gb")
+    parser.add_argument("--max-pieces", type=int, default=50, help="match the model arms you're comparing against")
+    parser.add_argument("--seed", type=lambda s: int(s, 0), default=0, help="timer_div; same seed = same pieces")
+    parser.add_argument("--label", default="human", help="arm name in the results table")
+    parser.add_argument("--no-save", action="store_true", help="print the result without writing it")
+    parser.add_argument("--runs-dir", default="runs", help="where to record the per-piece replay")
+    parser.add_argument("--no-record", action="store_true", help="skip the runs/ replay recording")
+    args = parser.parse_args(argv)
+
+    from tetris_agent.agent import _RecorderSink
+    from tetris_agent.events import EventCollector
+    from tetris_agent.publisher import NoopPublisher
+    from tetris_agent.recorder import RunRecorder
+
+    recorder = None if args.no_record else RunRecorder(args.runs_dir, label=args.label)
+    collector = EventCollector(NoopPublisher())
+    if recorder is not None:
+        collector.publisher = _RecorderSink(recorder)
+
+    fitness = play(
+        args.rom,
+        max_pieces=args.max_pieces,
+        timer_div=args.seed,
+        collector=collector,
+        recorder=recorder,
+    )
+    result = ArmResult(
+        arm=args.label,
+        seed=args.seed,
+        fitness=fitness,
+        policy_stats={"policy": args.label, "decisions": 0, "cost_usd": 0.0},
+    )
+    rows = summarize([result])
+    print("\n" + render_table(rows))
+    if not args.no_save:
+        print(f"\nresults: {write_results([result], rows)}")
+    return 0
