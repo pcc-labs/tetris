@@ -43,3 +43,60 @@ def test_plan_returns_none_when_nothing_fits():
     board[0] = False
     board[0, 5] = True  # only scattered space in top row: nothing fits anywhere
     assert plan_placement(board, "O", Genome()) is None
+
+
+def test_no_input_policy_returns_the_spawn_position_so_nothing_is_pressed():
+    # Measured against the ROM: every piece spawns at rotation 0, leftmost
+    # column 3, except O which spawns at 4. Returning that means the
+    # controller has nothing to correct and the piece drops where it appeared.
+    from tetris_agent.policy import NoInputPolicy
+
+    p = NoInputPolicy()
+    board = np.zeros((18, 10), dtype=bool)
+    assert p.name == "no-input"
+    for piece in ("I", "J", "L", "T", "S", "Z"):
+        placement = p.plan(board, piece, "I", turn=1)
+        assert (placement.rotation, placement.col) == (0, 3)
+    assert p.plan(board, "O", "I", turn=1).col == 4
+
+
+def test_no_input_policy_keeps_dropping_into_a_crowded_board():
+    # The floor arm must not bail out when the stack is high — topping out is
+    # the result we want to measure, not an error to avoid.
+    from tetris_agent.policy import NoInputPolicy
+
+    board = np.ones((18, 10), dtype=bool)
+    assert NoInputPolicy().plan(board, "T", "I", turn=1) is not None
+
+
+def test_random_policy_only_ever_picks_a_placement_that_fits():
+    from tetris_agent.policy import RandomPolicy, legal_moves
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[17, 0:4] = True
+    board[16, 0:2] = True
+    legal = set(legal_moves(board, "T"))
+    p = RandomPolicy(seed=7)
+    for _ in range(40):
+        placement = p.plan(board, "T", "I", turn=1)
+        assert (placement.rotation, placement.col) in legal
+
+
+def test_random_policy_is_reproducible_and_actually_varies():
+    from tetris_agent.policy import RandomPolicy
+
+    board = np.zeros((18, 10), dtype=bool)
+
+    def sequence(seed):
+        policy = RandomPolicy(seed=seed)
+        picks = [policy.plan(board, "T", "I", turn) for turn in range(12)]
+        return [(p.rotation, p.col) for p in picks]
+
+    assert sequence(3) == sequence(3)  # same seed, same run
+    assert len(set(sequence(3))) > 1  # and it is not stuck on one move
+
+
+def test_random_policy_returns_none_when_nothing_fits():
+    from tetris_agent.policy import RandomPolicy
+
+    assert RandomPolicy().plan(np.ones((18, 10), dtype=bool), "T", "I", turn=1) is None

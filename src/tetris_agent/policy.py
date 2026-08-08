@@ -4,12 +4,13 @@ A Policy is the benchmark's unit of comparison — the heuristic search here is
 the control against which model-driven policies (model_policy.py) are scored.
 """
 
+import random
 from dataclasses import dataclass, fields
 from typing import Protocol
 
 import numpy as np
 
-from tetris_agent.board import drop, features, place
+from tetris_agent.board import COLS, drop, features, place
 from tetris_agent.pieces import SHAPES, distinct_rotations, shape_width
 
 
@@ -75,8 +76,24 @@ class Policy(Protocol):
     def stats(self) -> dict: ...
 
 
+def legal_moves(board: np.ndarray, piece: str) -> list[tuple[int, int]]:
+    """Every (rotation, col) the piece can be dropped into — the action space."""
+    out = []
+    for rot in distinct_rotations(piece):
+        shape = SHAPES[(piece, rot)]
+        for col in range(COLS - shape_width(shape) + 1):
+            if drop(board, shape, col) is not None:
+                out.append((rot, col))
+    return out
+
+
 class HeuristicPolicy:
-    """Control arm: weighted one-piece search. No model, no cost, no latency."""
+    """Ceiling arm: weighted one-piece search. No model, no cost, no latency.
+
+    Not a control — it is a tuned solver that evaluates every option exactly.
+    It answers "how well can this be played", not "what does no skill look
+    like". For that, see NoInputPolicy and RandomPolicy below.
+    """
 
     def __init__(self, genome: Genome | None = None):
         self.genome = genome or Genome()
@@ -84,6 +101,56 @@ class HeuristicPolicy:
 
     def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
         return plan_placement(board, piece, self.genome)
+
+    def stats(self) -> dict:
+        return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}
+
+
+class NoInputPolicy:
+    """Floor arm: nobody plays. Every piece lands where it spawned.
+
+    Game Boy Tetris spawns each piece at rotation 0 with its leftmost cell in
+    column 3 — column 4 for O (measured against the ROM). Returning the spawn
+    position means the controller presses nothing, so the piece drops straight
+    down and the stack builds in the middle until it tops out. This is the
+    score you get for letting the game run, and every other arm has to beat it
+    before its decisions can be said to have done anything.
+    """
+
+    SPAWN_COL = {"O": 4}
+    SPAWN_COL_DEFAULT = 3
+
+    def __init__(self):
+        self.name = "no-input"
+
+    def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
+        return Placement(rotation=0, col=self.SPAWN_COL.get(piece, self.SPAWN_COL_DEFAULT), score=0.0)
+
+    def stats(self) -> dict:
+        return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}
+
+
+class RandomPolicy:
+    """Chance arm: a uniformly random spot the piece actually fits.
+
+    The same action space the model arms choose from — every pick is legal —
+    but with no judgement about which one is good. This is the bar a model's
+    "best guess at where the piece fits" has to clear to carry any information
+    at all; beating the heuristic is a much later question.
+
+    Seeded so a rerun on the same piece sequence reproduces exactly.
+    """
+
+    def __init__(self, seed: int = 0):
+        self.name = "random"
+        self._rng = random.Random(seed)
+
+    def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
+        options = legal_moves(board, piece)
+        if not options:
+            return None
+        rotation, col = self._rng.choice(options)
+        return Placement(rotation=rotation, col=col, score=0.0)
 
     def stats(self) -> dict:
         return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}

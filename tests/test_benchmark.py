@@ -143,3 +143,25 @@ def test_estimate_mode_spends_nothing(capsys):
     out = capsys.readouterr().out
     assert "projected cost" in out
     assert "heuristic" in out
+
+
+def test_expand_arms_includes_floor_chance_and_ceiling_baselines():
+    arms = expand_arms(["claude-opus-5"], ["board"], ["low"])
+    names = [a.name for a in arms]
+    # Ordered weakest-first so the table reads as a ladder.
+    assert names[:3] == ["heuristic", "random", "no-input"]
+    assert "claude-opus-5/board/low" in names
+
+
+def test_build_policy_dispatches_the_baseline_arms():
+    from tetris_agent.policy import HeuristicPolicy, NoInputPolicy, RandomPolicy
+
+    assert isinstance(build_policy(Arm("no-input")), NoInputPolicy)
+    assert isinstance(build_policy(Arm("random")), RandomPolicy)
+    assert isinstance(build_policy(Arm("heuristic")), HeuristicPolicy)
+
+
+def test_baseline_arms_cost_nothing_in_the_estimate():
+    arms = expand_arms([], [], [])
+    assert [a.name for a in arms] == ["heuristic", "random", "no-input"]
+    assert estimate_cost(arms, [0], max_pieces=50) == 0.0

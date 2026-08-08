@@ -32,8 +32,8 @@ class Arm:
 
     @property
     def name(self) -> str:
-        if self.policy == "heuristic":
-            return "heuristic"
+        if self.policy != "model":
+            return self.policy
         parts = [self.model, self.harness]
         if self.effort:
             parts.append(self.effort)
@@ -53,13 +53,19 @@ class ArmResult:
         return float(self.policy_stats.get("cost_usd", 0.0))
 
 
+# Non-model reference arms, weakest first. `no-input` is the floor (nobody
+# plays), `random` is chance within the legal action space, `heuristic` is the
+# tuned-solver ceiling. A model arm is only interesting above `random`.
+BASELINE_POLICIES = ("no-input", "random", "heuristic")
+
+
 def expand_arms(models: list[str], harnesses: list[str], efforts: list[str], include_control: bool = True) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
     Haiku 4.5 does not accept output_config.effort, so it contributes one arm
     per harness instead of one per (harness, effort).
     """
-    arms = [Arm(policy="heuristic")] if include_control else []
+    arms = [Arm(policy=p) for p in reversed(BASELINE_POLICIES)] if include_control else []
     seen = set()
     for model, harness, effort in itertools.product(models, harnesses, efforts):
         eff = effort if spec(model).supports_effort else None
@@ -71,10 +77,14 @@ def expand_arms(models: list[str], harnesses: list[str], efforts: list[str], inc
 
 
 def build_policy(arm: Arm, genome_params: dict | None = None):
-    from tetris_agent.policy import Genome, HeuristicPolicy
+    from tetris_agent.policy import Genome, HeuristicPolicy, NoInputPolicy, RandomPolicy
 
     if arm.policy == "heuristic":
         return HeuristicPolicy(Genome.from_params(genome_params or {}))
+    if arm.policy == "no-input":
+        return NoInputPolicy()
+    if arm.policy == "random":
+        return RandomPolicy()
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
 
