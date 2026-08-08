@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tetris_agent.pricing import cost_usd, spec
+from tetris_agent.pricing import cost_usd, is_pi, spec
 from tetris_agent.prompts import (
     HARNESSES,
     PLACEMENT_SCHEMA,
@@ -83,3 +83,17 @@ def test_cost_accounts_for_cache_discount():
     cached = cost_usd("claude-opus-5", input_tokens=0, output_tokens=0, cache_read_tokens=1_000_000)
     assert full == 5.0
     assert cached == pytest.approx(0.5)
+
+
+def test_pi_models_are_free_and_gate_thinking_by_capability():
+    assert is_pi("pi/gpt-oss:20b") and not is_pi("claude-opus-5")
+    assert spec("pi/gpt-oss:20b").supports_effort is True
+    assert spec("pi/gemma3").supports_effort is False
+    assert cost_usd("pi/gpt-oss:20b", input_tokens=1_000_000, output_tokens=100_000) == 0.0
+
+
+def test_unlisted_pi_model_falls_back_to_free_effortless_spec():
+    s = spec("pi/some-model-nobody-registered")
+    assert (s.input_per_mtok, s.output_per_mtok, s.supports_effort) == (0.0, 0.0, False)
+    with pytest.raises(KeyError):
+        spec("bogus-model")

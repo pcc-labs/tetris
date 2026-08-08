@@ -3,6 +3,7 @@ import json
 from tetris_agent.benchmark import (
     Arm,
     ArmResult,
+    build_policy,
     estimate_cost,
     expand_arms,
     main,
@@ -48,6 +49,32 @@ def test_estimate_cost_ignores_the_free_control_arm():
     with_control = estimate_cost(arms, [0], max_pieces=10)
     without = estimate_cost([a for a in arms if a.policy == "model"], [0], max_pieces=10)
     assert with_control == without > 0
+
+
+def test_expand_arms_collapses_effort_for_non_thinking_pi_models():
+    arms = expand_arms(["claude-opus-5", "pi/gpt-oss:20b", "pi/gemma3"], ["board"], ["low", "high"])
+    names = [a.name for a in arms]
+    assert "pi/gpt-oss:20b/board/low" in names
+    assert "pi/gpt-oss:20b/board/high" in names
+    # gemma3 has no thinking support, so it collapses like haiku does.
+    assert "pi/gemma3/board" in names
+    assert not any(n.startswith("pi/gemma3/board/") for n in names)
+
+
+def test_pi_arms_are_free_in_the_estimate():
+    paid = expand_arms(["claude-opus-5"], ["board"], ["low"], include_control=False)
+    mixed = expand_arms(["claude-opus-5", "pi/gpt-oss:20b"], ["board"], ["low"], include_control=False)
+    assert estimate_cost(mixed, [0], max_pieces=10) == estimate_cost(paid, [0], max_pieces=10) > 0
+    all_pi = expand_arms(["pi/gpt-oss:20b"], ["board"], ["low"], include_control=False)
+    assert estimate_cost(all_pi, [0], max_pieces=10) == 0.0
+
+
+def test_build_policy_dispatches_pi_models_to_pi_policy():
+    from tetris_agent.pi_policy import PiPolicy
+
+    policy = build_policy(Arm("model", "pi/gemma3", "board", None))
+    assert isinstance(policy, PiPolicy)
+    assert policy.ollama_model == "gemma3"
 
 
 def test_run_matrix_stops_when_the_budget_cap_is_reached():

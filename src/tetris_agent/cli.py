@@ -64,6 +64,12 @@ def build_policy(cfg: Config):
 
     if cfg.policy == "heuristic":
         return HeuristicPolicy(Genome.from_params(load_params()))
+    from tetris_agent.pricing import is_pi
+
+    if is_pi(cfg.model):
+        from tetris_agent.pi_policy import PiPolicy
+
+        return PiPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort)
     from tetris_agent.model_policy import ModelPolicy
 
     return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort)

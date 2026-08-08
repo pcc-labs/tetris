@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tetris_agent.fitness import race_score
-from tetris_agent.pricing import spec
+from tetris_agent.pricing import is_pi, spec
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,10 @@ def build_policy(arm: Arm, genome_params: dict | None = None):
 
     if arm.policy == "heuristic":
         return HeuristicPolicy(Genome.from_params(genome_params or {}))
+    if is_pi(arm.model):
+        from tetris_agent.pi_policy import PiPolicy
+
+        return PiPolicy(model=arm.model, harness=arm.harness, effort=arm.effort)
     from tetris_agent.model_policy import ModelPolicy
 
     return ModelPolicy(model=arm.model, harness=arm.harness, effort=arm.effort)
