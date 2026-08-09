@@ -39,6 +39,7 @@ class LLMPlacementPolicy:
         harness: str = "features",
         effort: str | None = "medium",
         max_tokens: int = MAX_TOKENS,
+        exemplar_block: str = "",
     ):
         self.model = model
         self.harness = harness
@@ -46,6 +47,9 @@ class LLMPlacementPolicy:
         # Haiku 4.5 rejects output_config.effort; its arms are effort-free by construction.
         self.effort = effort if self.spec.supports_effort else None
         self.max_tokens = max_tokens
+        # Exemplars are static across the run, so they belong in the system
+        # prompt — cached — never in the per-piece user turn.
+        self.system_prompt = SYSTEM_PROMPT + (f"\n\n{exemplar_block}" if exemplar_block else "")
         self.name = f"{model}/{harness}" + (f"/{self.effort}" if self.effort else "")
         self._history: list[dict] = []
         self.usage = {
@@ -152,8 +156,9 @@ class ModelPolicy(LLMPlacementPolicy):
         effort: str | None = "medium",
         client=None,
         max_tokens: int = MAX_TOKENS,
+        exemplar_block: str = "",
     ):
-        super().__init__(model, harness, effort, max_tokens)
+        super().__init__(model, harness, effort, max_tokens, exemplar_block)
         self.client = client or anthropic.Anthropic()
 
     def _call(self, messages: list[dict]) -> dict | None:
@@ -166,7 +171,7 @@ class ModelPolicy(LLMPlacementPolicy):
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+                system=[{"type": "text", "text": self.system_prompt, "cache_control": {"type": "ephemeral"}}],
                 output_config=output_config,
                 messages=messages,
             )

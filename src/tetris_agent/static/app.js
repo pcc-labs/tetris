@@ -13,6 +13,8 @@ const state = {
   playing: false,
   speed: 1,
   timer: null,
+  playMode: false,       // a tetris-play session is live; keyboard is the controller
+  inputWs: null,
   hud: { score: 0, lines: 0, level: 0, piece: 0, holes: 0, misexec: 0 },
 };
 
@@ -71,6 +73,9 @@ function applyEvent(e) {
       if (d.fitness?.policy?.cost_usd) {
         tick({ turn: 0, text: `cost $${d.fitness.policy.cost_usd.toFixed(4)}` }, "warn");
       }
+      // A browser-play session hands the keyboard to the viewer.
+      if (d.phase === "start" && d.surface === "browser") setPlayMode(true);
+      if (d.phase === "end") setPlayMode(false);
       break;
   }
   renderHud();
@@ -102,6 +107,7 @@ function connectLive() {
     $("feed-state").textContent = "IDLE";
     $("feed-state").classList.remove("live");
     state.ws = null;
+    setPlayMode(false);
     if (state.mode === "live") setTimeout(connectLive, 1500);
   };
   ws.onmessage = (evt) => {
@@ -112,8 +118,62 @@ function connectLive() {
     $("feed-state").classList.add("live");
     if (msg.type === "frame") drawDataUrl(`data:image/png;base64,${msg.png}`);
     else if (msg.type === "event") applyEvent(msg.event);
+    else if (msg.type === "play_session") setPlayMode(true);  // continuous announce; late tabs arm too
   };
 }
+
+/* ── browser play: keyboard → /ws/input ── */
+// Arrows move/soft-drop, up-arrow or a/s rotate, space starts the session and
+// hard-drops in play (the backend synthesizes the drop — the Game Boy has
+// none). The Game Boy ignores d-pad up in play, so ↑ maps to the A button —
+// the rotate key every modern Tetris player reaches for.
+// Press/release pairs, so the Game Boy's own DAS applies to held arrows.
+const KEYMAP = {
+  ArrowLeft: "left", ArrowRight: "right", ArrowDown: "down",
+  ArrowUp: "a", a: "a", A: "a", s: "b", S: "b",
+  Enter: "start", " ": "hard_drop",
+};
+
+// Keys are ALWAYS captured and sent in live mode — arming must never depend
+// on having caught a session-start broadcast (a tab opened after tetris-play
+// launches would stay deaf forever). playMode only drives the indicator.
+function connectInput() {
+  if (state.inputWs) return;
+  const ws = new WebSocket(`ws://${location.host}/ws/input`);
+  ws.onclose = () => {
+    state.inputWs = null;
+    if (state.mode === "live") setTimeout(connectInput, 1500);
+  };
+  state.inputWs = ws;
+}
+
+function setPlayMode(on) {
+  if (on === state.playMode) return;
+  state.playMode = on;
+  $("feed-state").textContent = on ? "PLAYING" : (state.ws ? "LIVE" : "IDLE");
+  $("feed-state").classList.toggle("playing", on);
+}
+
+function sendInput(button, action) {
+  const ws = state.inputWs;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "input", button, action }));
+  }
+}
+
+window.addEventListener("keydown", (e) => {
+  const button = KEYMAP[e.key];
+  if (state.mode !== "live" || !button) return;
+  e.preventDefault();
+  if (!e.repeat) sendInput(button, "press");  // held keys: the GB does its own DAS
+});
+
+window.addEventListener("keyup", (e) => {
+  const button = KEYMAP[e.key];
+  if (state.mode !== "live" || !button) return;
+  e.preventDefault();
+  sendInput(button, "release");
+});
 
 /* ── REPLAY mode ── */
 async function loadShelf() {
@@ -232,9 +292,9 @@ function setMode(mode) {
   $("bench-panel").classList.toggle("hidden", mode !== "bench");
   $("lcd-notice").classList.remove("hidden");
   resetHud();
-  if (mode === "replay") { setPlaying(false); loadShelf(); }
-  else if (mode === "bench") { setPlaying(false); loadBench(); }
-  else connectLive();
+  if (mode === "replay") { setPlaying(false); loadShelf(); setPlayMode(false); }
+  else if (mode === "bench") { setPlaying(false); loadBench(); setPlayMode(false); }
+  else { connectLive(); connectInput(); }
 }
 
 const MODES = ["live", "replay", "bench"];

@@ -165,3 +165,20 @@ def test_baseline_arms_cost_nothing_in_the_estimate():
     arms = expand_arms([], [], [])
     assert [a.name for a in arms] == ["heuristic", "random", "no-input"]
     assert estimate_cost(arms, [0], max_pieces=50) == 0.0
+
+
+def test_exemplar_arms_carry_a_visible_marker():
+    from tetris_agent.benchmark import Arm, expand_arms
+
+    arm = Arm(policy="model", model="claude-sonnet-5", harness="features", effort="low", exemplars=True)
+    assert arm.name == "claude-sonnet-5/features/low+ex"
+    arms = expand_arms(["claude-sonnet-5"], ["features"], ["low"], include_control=False, exemplars=True)
+    assert all(a.exemplars for a in arms if a.policy == "model")
+
+
+def test_build_policy_threads_exemplar_block_into_pi_arms():
+    from tetris_agent.benchmark import Arm, build_policy
+
+    arm = Arm(policy="model", model="pi/gemma3", harness="features", effort=None, exemplars=True)
+    p = build_policy(arm, exemplar_block="EXEMPLARS")
+    assert "EXEMPLARS" in p.system_prompt

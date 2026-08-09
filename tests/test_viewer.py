@@ -97,3 +97,24 @@ def test_benchmarks_endpoint_empty_without_results(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     client = TestClient(create_app(tmp_path))
     assert client.get("/api/benchmarks").json() == []
+
+
+def test_input_hub_echoes_to_other_peers_not_sender(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    with client.websocket_connect("/ws/input") as game:
+        with client.websocket_connect("/ws/input") as browser:
+            browser.send_text('{"type": "input", "button": "left", "action": "press"}')
+            message = json.loads(game.receive_text())
+            assert message == {"type": "input", "button": "left", "action": "press"}
+            # The sender must not hear its own keystrokes back.
+            game.send_text('{"type": "input", "button": "a", "action": "press"}')
+            echoed = json.loads(browser.receive_text())
+            assert echoed["button"] == "a"
+
+
+def test_static_and_index_are_served_no_cache(tmp_path):
+    # A stale cached app.js silently breaks browser play; the viewer is a dev
+    # tool, so make every tab revalidate.
+    client = TestClient(create_app(tmp_path))
+    assert client.get("/").headers.get("cache-control") == "no-cache"
+    assert client.get("/static/app.js").headers.get("cache-control") == "no-cache"

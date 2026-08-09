@@ -310,3 +310,13 @@ def test_preflight_cannot_judge_size_without_a_ram_reading(monkeypatch):
     monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"qwen3:8b": 5_200_000_000})
     monkeypatch.setattr(mod, "_total_ram_bytes", lambda: None)
     assert mod.preflight(["pi/qwen3:8b"]) == []  # unknown RAM must not block the run
+
+
+def test_exemplar_block_reaches_the_pi_system_prompt():
+    runner = FakeRunner([completed(jsonl_events('{"rotation": 0, "col": 3, "reason": "x"}'))])
+    p = PiPolicy(model="pi/gemma3", runner=runner, exemplar_block="EXEMPLARS")
+    p.plan(np.zeros((18, 10), dtype=bool), "O", "I", turn=1)
+    cmd = runner.calls[0]
+    system = cmd[cmd.index("--system-prompt") + 1]
+    assert "EXEMPLARS" in system
+    assert "Return ONLY" in system or "JSON" in system  # pi's format contract still appended

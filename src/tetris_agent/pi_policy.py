@@ -20,7 +20,6 @@ from pathlib import Path
 
 from tetris_agent.model_policy import LLMPlacementPolicy
 from tetris_agent.pricing import PI_PREFIX
-from tetris_agent.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +192,11 @@ class PiPolicy(LLMPlacementPolicy):
         timeout_s: float = DEFAULT_TIMEOUT_S,
         pi_bin: str = "pi",
         extension: Path = TAPES_EXTENSION,
+        exemplar_block: str = "",
     ):
         if not model.startswith(PI_PREFIX):
             raise ValueError(f"PiPolicy needs a {PI_PREFIX}* model id, got {model!r}")
-        super().__init__(model, harness, effort)
+        super().__init__(model, harness, effort, exemplar_block=exemplar_block)
         self.ollama_model = model.removeprefix(PI_PREFIX)
         self.runner = runner or _run_pi
         self.timeout_s = timeout_s
@@ -221,7 +221,7 @@ class PiPolicy(LLMPlacementPolicy):
             "--no-context-files",
             "--no-extensions",
             "--system-prompt",
-            SYSTEM_PROMPT + PI_JSON_INSTRUCTIONS,
+            self.system_prompt + PI_JSON_INSTRUCTIONS,
             "-e",
             str(self.extension),
         ]

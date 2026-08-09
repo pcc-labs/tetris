@@ -18,7 +18,12 @@ except Exception:  # pragma: no cover - optional dependency guard
 
 class LiveStreamer:
     def __init__(self, viewer_url: str):
-        self.url = viewer_url.rstrip("/") + "/ws/produce"
+        # Accept the viewer's http(s) address too: connect failures are
+        # swallowed by design below, so a wrong scheme would otherwise
+        # disable streaming with nothing but one log line to show for it.
+        base = viewer_url.rstrip("/")
+        base = base.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+        self.url = base + "/ws/produce"
         self._ws = None
         self._warned = False
 

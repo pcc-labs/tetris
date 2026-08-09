@@ -29,6 +29,7 @@ class Arm:
     model: str | None = None
     harness: str | None = None
     effort: str | None = None
+    exemplars: bool = False  # human exemplars in the system prompt
 
     @property
     def name(self) -> str:
@@ -37,7 +38,7 @@ class Arm:
         parts = [self.model, self.harness]
         if self.effort:
             parts.append(self.effort)
-        return "/".join(parts)
+        return "/".join(parts) + ("+ex" if self.exemplars else "")
 
 
 @dataclass
@@ -59,7 +60,13 @@ class ArmResult:
 BASELINE_POLICIES = ("no-input", "random", "heuristic")
 
 
-def expand_arms(models: list[str], harnesses: list[str], efforts: list[str], include_control: bool = True) -> list[Arm]:
+def expand_arms(
+    models: list[str],
+    harnesses: list[str],
+    efforts: list[str],
+    include_control: bool = True,
+    exemplars: bool = False,
+) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
     Haiku 4.5 does not accept output_config.effort, so it contributes one arm
@@ -69,14 +76,14 @@ def expand_arms(models: list[str], harnesses: list[str], efforts: list[str], inc
     seen = set()
     for model, harness, effort in itertools.product(models, harnesses, efforts):
         eff = effort if spec(model).supports_effort else None
-        arm = Arm(policy="model", model=model, harness=harness, effort=eff)
+        arm = Arm(policy="model", model=model, harness=harness, effort=eff, exemplars=exemplars)
         if arm.name not in seen:
             seen.add(arm.name)
             arms.append(arm)
     return arms
 
 
-def build_policy(arm: Arm, genome_params: dict | None = None):
+def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: str = ""):
     from tetris_agent.policy import Genome, HeuristicPolicy, NoInputPolicy, RandomPolicy
 
     if arm.policy == "heuristic":
@@ -85,23 +92,31 @@ def build_policy(arm: Arm, genome_params: dict | None = None):
         return NoInputPolicy()
     if arm.policy == "random":
         return RandomPolicy()
+    block = exemplar_block if arm.exemplars else ""
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
 
-        return PiPolicy(model=arm.model, harness=arm.harness, effort=arm.effort)
+        return PiPolicy(model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block)
     from tetris_agent.model_policy import ModelPolicy
 
-    return ModelPolicy(model=arm.model, harness=arm.harness, effort=arm.effort)
+    return ModelPolicy(model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block)
 
 
-def run_arm(arm: Arm, seed: int, rom_path, max_pieces: int, genome_params: dict | None = None) -> ArmResult:
+def run_arm(
+    arm: Arm,
+    seed: int,
+    rom_path,
+    max_pieces: int,
+    genome_params: dict | None = None,
+    exemplar_block: str = "",
+) -> ArmResult:
     from tetris_agent.agent import TetrisAgent
     from tetris_agent.emulator import Emulator
     from tetris_agent.events import EventCollector
     from tetris_agent.policy import Genome
     from tetris_agent.publisher import NoopPublisher
 
-    policy = build_policy(arm, genome_params)
+    policy = build_policy(arm, genome_params, exemplar_block)
     emu = Emulator(rom_path)
     try:
         agent = TetrisAgent(
@@ -237,6 +252,14 @@ def main(argv=None) -> int:
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
     parser.add_argument("--estimate", action="store_true", help="print a cost projection and exit")
     parser.add_argument("--skip-preflight", action="store_true", help="run pi arms without checking Ollama first")
+    parser.add_argument(
+        "--exemplars",
+        nargs="?",
+        const="runs",
+        default=None,
+        metavar="RUNS_DIR",
+        help="inject verified human traces from RUNS_DIR (default runs/); model arms are labeled +ex",
+    )
     args = parser.parse_args(argv)
 
     if not args.skip_preflight and any(is_pi(m) for m in args.models):
@@ -250,7 +273,21 @@ def main(argv=None) -> int:
             print("\n(--skip-preflight to try anyway)")
             return 1
 
-    arms = expand_arms(args.models, args.harnesses, args.efforts, include_control=not args.no_control)
+    exemplar_block = ""
+    if args.exemplars:
+        from tetris_agent.traces import load_exemplar_block
+
+        # Load before anything runs: a matrix that would silently drop its
+        # exemplars mid-flight is worse than one that refuses to start.
+        exemplar_block = load_exemplar_block(args.exemplars)
+
+    arms = expand_arms(
+        args.models,
+        args.harnesses,
+        args.efforts,
+        include_control=not args.no_control,
+        exemplars=bool(args.exemplars),
+    )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
     print(f"arms: {', '.join(a.name for a in arms)}")
@@ -263,8 +300,12 @@ def main(argv=None) -> int:
         status = result.error or f"score={f.get('score', 0)} pieces={f.get('pieces_placed', 0)}"
         print(f"  [{result.arm} seed={result.seed}] {status}  spent=${spent:.4f}")
 
+    def runner(arm, seed, rom_path, max_pieces):
+        return run_arm(arm, seed, rom_path, max_pieces, exemplar_block=exemplar_block)
+
     results = run_matrix(
-        arms, args.seeds, args.rom, max_pieces=args.max_pieces, max_usd=args.max_usd, on_result=progress
+        arms, args.seeds, args.rom, max_pieces=args.max_pieces, max_usd=args.max_usd,
+        runner=runner, on_result=progress,
     )
     rows = summarize(results)
     print("\n" + render_table(rows))

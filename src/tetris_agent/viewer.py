@@ -62,6 +62,16 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
     app = FastAPI(title="tetris-agent viewer")
     hub = LiveHub()
     app.state.hub = hub
+    app.state.input_peers = set()
+
+    @app.middleware("http")
+    async def no_stale_frontend(request, call_next):
+        # A cached app.js from before a code change silently breaks browser
+        # play (keys go nowhere). Dev tool: every tab revalidates, 304s are cheap.
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static"):
+            response.headers["cache-control"] = "no-cache"
+        return response
 
     @app.get("/")
     async def index():
@@ -132,6 +142,32 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
                 await hub.broadcast(message)
         except WebSocketDisconnect:
             pass
+
+    @app.websocket("/ws/input")
+    async def ws_input(ws: WebSocket):
+        # Echo hub for browser play: the browser writes keystrokes, the game
+        # process reads them. Every peer hears everyone but itself, so the
+        # endpoint doesn't care which side is which.
+        await ws.accept()
+        peers: set[WebSocket] = app.state.input_peers
+        peers.add(ws)
+        try:
+            while True:
+                message = await ws.receive_text()
+                dead = []
+                for peer in peers:
+                    if peer is ws:
+                        continue
+                    try:
+                        await peer.send_text(message)
+                    except Exception:
+                        dead.append(peer)
+                for peer in dead:
+                    peers.discard(peer)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            peers.discard(ws)
 
     @app.websocket("/ws/live")
     async def ws_live(ws: WebSocket):

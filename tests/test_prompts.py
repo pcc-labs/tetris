@@ -97,3 +97,25 @@ def test_unlisted_pi_model_falls_back_to_free_effortless_spec():
     assert (s.input_per_mtok, s.output_per_mtok, s.supports_effort) == (0.0, 0.0, False)
     with pytest.raises(KeyError):
         spec("bogus-model")
+
+
+def test_exemplar_block_renders_each_decision():
+    from tetris_agent.prompts import build_exemplar_block
+    from tetris_agent.traces import Exemplar
+
+    board = empty_board()
+    board[16:, 0:2] = True
+    block = build_exemplar_block(
+        [Exemplar(board=board, piece="I", next_piece="T", rotation=1, col=9, lines_delta=1, holes=0)]
+    )
+    assert "human" in block.lower()
+    assert "Piece: I" in block and "Next: T" in block
+    assert "rotation=1 col=9" in block
+    assert "cleared 1 line" in block
+    assert "##........" in block  # the board the human saw
+
+
+def test_exemplar_block_empty_pool_is_empty_string():
+    from tetris_agent.prompts import build_exemplar_block
+
+    assert build_exemplar_block([]) == ""

@@ -20,6 +20,7 @@ tetris-discovery = "tetris_agent.cli:discovery_main"
 tetris-viewer = "tetris_agent.viewer:main"
 tetris-bench = "tetris_agent.benchmark:main"
 tetris-manual = "tetris_agent.cli:manual_main"
+tetris-play = "tetris_agent.cli:play_main"
 
 [dependency-groups]
 dev = [
