@@ -164,3 +164,29 @@ def build_user_prompt(
         + "\n\nChoose one of them. The numbers describe consequences, not a ranking — "
         "weigh them yourself."
     )
+
+
+def build_exemplar_block(exemplars) -> str:
+    """Render mined human decisions for the (cached) system prompt.
+
+    Static across a run by construction — the block must live in the system
+    prompt, where it is cached, not in the per-piece user turn, where it
+    would be paid for on every decision.
+    """
+    if not exemplars:
+        return ""
+    parts = [
+        "# How a strong human placed pieces",
+        "",
+        "Real decisions from a human player facing the same game. Imitate the",
+        "judgement, not the exact moves — your boards will differ.",
+    ]
+    for i, ex in enumerate(exemplars, start=1):
+        outcome = f"cleared {ex.lines_delta} line(s)" if ex.lines_delta else f"left {ex.holes} hole(s)"
+        parts += [
+            "",
+            f"## Example {i} — Piece: {ex.piece}, Next: {ex.next_piece}",
+            render_board(ex.board),
+            f"Human chose rotation={ex.rotation} col={ex.col} — {outcome}.",
+        ]
+    return "\n".join(parts)

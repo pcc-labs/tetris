@@ -31,8 +31,39 @@ The harness is the interesting axis — it is how much of the reasoning is done
 - **`chat`** — like `board`, but conversation history carries across pieces, so
   the model can pursue a plan (and pays for the growing context).
 
-The **`heuristic`** arm runs the weighted one-piece search in `policy.py`: no
-model, no cost, no latency. It is the number every model arm is measured against.
+The reference that matters is **human play**: `tetris-play` records your own
+games as traces (see below), and the `no-input` / `random` arms bound the floor
+and chance. The **`heuristic`** arm (the weighted one-piece search in
+`policy.py`) still runs as a control, but it is an exhaustive solver, not a
+player — don't read model arms against it.
+
+## Play it yourself, then let the models learn from you
+
+```bash
+uv run tetris-viewer                     # the GRAMBOY viewer, http://127.0.0.1:8000
+uv run tetris-play --seed 0 --max-pieces 50
+```
+
+`tetris-play` runs the emulator headless and streams it into the viewer's LIVE
+tab; your keyboard drives it from the browser (`space` starts the session and
+hard-drops in play, arrows move/soft-drop, `up` or `a`/`s` rotate). The game idles at
+the title screen until you press space, so nothing is recorded before you're
+actually playing. Every piece you place is recorded to `runs/<id>/` as
+the same spawn → decision → locked events a model arm emits, tagged
+`policy: "human"`. (`tetris-manual` still does the same in a native SDL window.)
+
+Those traces then feed the model arms. `--exemplars` mines your recorded runs
+— reconstructing each board you faced and *verifying* the reconstruction
+against the recorded per-piece features, so a misread never becomes a training
+pair — and injects the best decisions into the (cached) system prompt:
+
+```bash
+uv run tetris-agent --policy model --model claude-sonnet-5 --harness features --exemplars --live
+uv run tetris-bench --models claude-sonnet-5 --harnesses features --exemplars
+```
+
+Exemplar arms are labeled `+ex` in results, so with-and-without stays an
+honest comparison.
 
 ```bash
 # Project the spend without calling anything

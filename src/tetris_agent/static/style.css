@@ -159,6 +159,7 @@ body {
 .dim { color: var(--dim); font-family: var(--mono); font-size: 10px; }
 .feed-state { font-size: 9px; color: var(--amber); }
 .feed-state.live { color: #ff5e57; animation: blink 1.2s steps(2) infinite; }
+.feed-state.playing { color: #2ecc71; animation: blink 1.2s steps(2) infinite; }
 @keyframes blink { 50% { opacity: .35; } }
 
 .readouts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }

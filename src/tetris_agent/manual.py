@@ -69,26 +69,17 @@ def _follow_until_locked(emu, limit: int = _WAIT_LIMIT):
     return last_seen, "locked"
 
 
-def play(rom_path, max_pieces: int = 50, timer_div: int = 0, collector=None, recorder=None) -> dict:
-    """Play by hand; returns the same fitness dict a policy arm produces."""
-    from tetris_agent.emulator import Emulator
-    from tetris_agent.events import EventCollector
-    from tetris_agent.publisher import NoopPublisher
+def observe_loop(emu, collector, tracker, max_pieces: int) -> tuple[int, bool]:
+    """Watch falling→locked transitions and emit spawn/decision/locked events.
 
-    collector = collector or EventCollector(NoopPublisher())
-    emu = Emulator(rom_path, headless=False, speed=1)
-    if recorder is not None:
-        emu.frame_hook = lambda: recorder.record_frame(collector.turn, emu.screenshot())
-
-    tracker = FitnessTracker()
+    Shared by every human-driven surface (SDL window, browser): the input
+    source differs, the observation doesn't. Returns (pieces placed, whether
+    the window/connection closed early).
+    """
     placed = 0
     closed = False
     lines_before = 0
-
-    print(f"\nManual run — seed {timer_div}, up to {max_pieces} pieces.\n\n{CONTROLS}\n")
-    collector.session("start", {"policy": "human", "timer_div": timer_div, "max_pieces": max_pieces})
     try:
-        emu.start(timer_div=timer_div)
         while placed < max_pieces:
             state = _wait_until(emu, lambda s: s.falling is not None or s.game_over)
             if state is None:
@@ -130,6 +121,29 @@ def play(rom_path, max_pieces: int = 50, timer_div: int = 0, collector=None, rec
                 break
     except KeyboardInterrupt:
         print("\n  stopped early.")
+    return placed, closed
+
+
+def play(rom_path, max_pieces: int = 50, timer_div: int = 0, collector=None, recorder=None) -> dict:
+    """Play by hand; returns the same fitness dict a policy arm produces."""
+    from tetris_agent.emulator import Emulator
+    from tetris_agent.events import EventCollector
+    from tetris_agent.publisher import NoopPublisher
+
+    collector = collector or EventCollector(NoopPublisher())
+    emu = Emulator(rom_path, headless=False, speed=1)
+    if recorder is not None:
+        emu.frame_hook = lambda: recorder.record_frame(collector.turn, emu.screenshot())
+
+    tracker = FitnessTracker()
+    placed = 0
+    closed = False
+
+    print(f"\nManual run — seed {timer_div}, up to {max_pieces} pieces.\n\n{CONTROLS}\n")
+    collector.session("start", {"policy": "human", "timer_div": timer_div, "max_pieces": max_pieces})
+    try:
+        emu.start(timer_div=timer_div)
+        placed, closed = observe_loop(emu, collector, tracker, max_pieces)
     finally:
         fitness = tracker.compute(score=emu.score, lines=emu.lines, level=emu.level)
         fitness["policy"] = {"policy": "human", "decisions": placed, "cost_usd": 0.0}

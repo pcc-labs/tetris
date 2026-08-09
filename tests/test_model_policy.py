@@ -139,3 +139,22 @@ def test_plan_returns_none_when_no_placement_fits():
     board = np.ones((18, 10), dtype=bool)
     p = policy([])
     assert p.plan(board, "O", "I", turn=1) is None
+
+
+def test_exemplar_block_joins_the_cached_system_prompt():
+    p = policy(
+        [FakeResponse({"rotation": 0, "col": 3, "reason": "x"})],
+        exemplar_block="# How a strong human placed pieces\nEXEMPLARS",
+    )
+    p.plan(empty_board(), "O", "I", turn=1)
+    system = p.client.messages.calls[0]["system"]
+    assert "EXEMPLARS" in system[0]["text"]
+    assert system[0]["cache_control"] == {"type": "ephemeral"}  # still cached
+
+
+def test_without_exemplars_system_prompt_is_unchanged():
+    from tetris_agent.prompts import SYSTEM_PROMPT
+
+    p = policy([FakeResponse({"rotation": 0, "col": 3, "reason": "x"})])
+    p.plan(empty_board(), "O", "I", turn=1)
+    assert p.client.messages.calls[0]["system"][0]["text"] == SYSTEM_PROMPT

@@ -32,6 +32,7 @@ class Config:
     model: str
     harness: str
     effort: str
+    exemplars: str | None
 
 
 def build_config(argv=None) -> Config:
@@ -55,6 +56,14 @@ def build_config(argv=None) -> Config:
     parser.add_argument("--model", default="claude-opus-5", help="model id when --policy model")
     parser.add_argument("--harness", default="features", choices=list(HARNESSES))
     parser.add_argument("--effort", default="medium", choices=list(EFFORTS))
+    parser.add_argument(
+        "--exemplars",
+        nargs="?",
+        const="runs",
+        default=None,
+        metavar="RUNS_DIR",
+        help="inject verified human traces from RUNS_DIR (default runs/) into the model's system prompt",
+    )
     return Config(**vars(parser.parse_args(argv)))
 
 
@@ -66,13 +75,18 @@ def build_policy(cfg: Config):
         return HeuristicPolicy(Genome.from_params(load_params()))
     from tetris_agent.pricing import is_pi
 
+    block = ""
+    if cfg.exemplars:
+        from tetris_agent.traces import load_exemplar_block
+
+        block = load_exemplar_block(cfg.exemplars)
     if is_pi(cfg.model):
         from tetris_agent.pi_policy import PiPolicy
 
-        return PiPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort)
+        return PiPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block)
     from tetris_agent.model_policy import ModelPolicy
 
-    return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort)
+    return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block)
 
 
 def agent_main(argv=None) -> int:
@@ -176,6 +190,60 @@ def manual_main(argv=None) -> int:
         args.rom,
         max_pieces=args.max_pieces,
         timer_div=args.seed,
+        collector=collector,
+        recorder=recorder,
+    )
+    result = ArmResult(
+        arm=args.label,
+        seed=args.seed,
+        fitness=fitness,
+        policy_stats={"policy": args.label, "decisions": 0, "cost_usd": 0.0},
+    )
+    rows = summarize([result])
+    print("\n" + render_table(rows))
+    if not args.no_save:
+        print(f"\nresults: {write_results([result], rows)}")
+    return 0
+
+
+def play_main(argv=None) -> int:
+    """Human play in the browser: streams into the viewer, records a human arm."""
+    logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+    import argparse
+
+    from tetris_agent import browser_play
+    from tetris_agent.benchmark import ArmResult, render_table, summarize, write_results
+
+    parser = argparse.ArgumentParser(
+        prog="tetris-play", description="Play in the browser; traces recorded like any arm"
+    )
+    parser.add_argument("--rom", default="rom/tetris.gb")
+    parser.add_argument("--max-pieces", type=int, default=50, help="match the model arms you're comparing against")
+    parser.add_argument("--seed", type=lambda s: int(s, 0), default=0, help="timer_div; same seed = same pieces")
+    parser.add_argument("--label", default="human", help="arm name in the results table")
+    parser.add_argument("--viewer-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--level", type=int, default=0, choices=range(10), help="starting level (gravity)")
+    parser.add_argument("--no-save", action="store_true", help="print the result without writing it")
+    parser.add_argument("--runs-dir", default="runs", help="where to record the per-piece replay")
+    parser.add_argument("--no-record", action="store_true", help="skip the runs/ replay recording")
+    args = parser.parse_args(argv)
+
+    from tetris_agent.agent import _RecorderSink
+    from tetris_agent.events import EventCollector
+    from tetris_agent.publisher import NoopPublisher
+    from tetris_agent.recorder import RunRecorder
+
+    recorder = None if args.no_record else RunRecorder(args.runs_dir, label=args.label)
+    collector = EventCollector(NoopPublisher())
+    if recorder is not None:
+        collector.publisher = _RecorderSink(recorder)
+
+    fitness = browser_play.play(
+        args.rom,
+        viewer_url=args.viewer_url,
+        max_pieces=args.max_pieces,
+        timer_div=args.seed,
+        level=args.level,
         collector=collector,
         recorder=recorder,
     )
