@@ -73,6 +73,8 @@ def mine_run(run_dir: Path, policies: tuple[str, ...] = ("human",)) -> list[Exem
         if kind == "piece_spawn":
             spawn, decision = data, None
         elif kind == "placement_decision":
+            if data.get("late"):
+                continue  # the piece it describes was already placed by gravity
             decision = data
         elif kind == "piece_locked":
             if spawn is None or decision is None:

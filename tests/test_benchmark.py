@@ -32,10 +32,10 @@ def test_expand_arms_includes_control_and_skips_effort_for_haiku():
     arms = expand_arms(["claude-opus-5", "claude-haiku-4-5"], ["board"], ["low", "high"])
     names = [a.name for a in arms]
     assert names[0] == "heuristic"
-    assert "claude-opus-5/board/low" in names
-    assert "claude-opus-5/board/high" in names
+    assert "claude-opus-5/board/low+live" in names
+    assert "claude-opus-5/board/high+live" in names
     # Haiku rejects effort, so it collapses to a single effort-free arm.
-    assert "claude-haiku-4-5/board" in names
+    assert "claude-haiku-4-5/board+live" in names
     assert not any(n.startswith("claude-haiku-4-5/board/") for n in names)
 
 
@@ -54,10 +54,10 @@ def test_estimate_cost_ignores_the_free_control_arm():
 def test_expand_arms_collapses_effort_for_non_thinking_pi_models():
     arms = expand_arms(["claude-opus-5", "pi/gpt-oss:20b", "pi/gemma3"], ["board"], ["low", "high"])
     names = [a.name for a in arms]
-    assert "pi/gpt-oss:20b/board/low" in names
-    assert "pi/gpt-oss:20b/board/high" in names
+    assert "pi/gpt-oss:20b/board/low+live" in names
+    assert "pi/gpt-oss:20b/board/high+live" in names
     # gemma3 has no thinking support, so it collapses like haiku does.
-    assert "pi/gemma3/board" in names
+    assert "pi/gemma3/board+live" in names
     assert not any(n.startswith("pi/gemma3/board/") for n in names)
 
 
@@ -150,7 +150,7 @@ def test_expand_arms_includes_floor_chance_and_ceiling_baselines():
     names = [a.name for a in arms]
     # Ordered weakest-first so the table reads as a ladder.
     assert names[:3] == ["heuristic", "random", "no-input"]
-    assert "claude-opus-5/board/low" in names
+    assert "claude-opus-5/board/low+live" in names
 
 
 def test_build_policy_dispatches_the_baseline_arms():
@@ -182,3 +182,124 @@ def test_build_policy_threads_exemplar_block_into_pi_arms():
     arm = Arm(policy="model", model="pi/gemma3", harness="features", effort=None, exemplars=True)
     p = build_policy(arm, exemplar_block="EXEMPLARS")
     assert "EXEMPLARS" in p.system_prompt
+
+
+def test_live_arms_carry_a_visible_marker():
+    arm = Arm(policy="model", model="claude-sonnet-5", harness="features", effort="low", live=True)
+    assert arm.name == "claude-sonnet-5/features/low+live"
+    both = Arm(policy="model", model="claude-sonnet-5", harness="features", effort="low", exemplars=True, live=True)
+    assert both.name == "claude-sonnet-5/features/low+ex+live"
+
+
+def test_expand_arms_defaults_model_arms_to_live_and_baselines_not():
+    arms = expand_arms(["claude-opus-5"], ["board"], ["low"])
+    names = [a.name for a in arms]
+    assert names[:3] == ["heuristic", "random", "no-input"]
+    assert "claude-opus-5/board/low+live" in names
+    assert all(not a.live for a in arms if a.policy != "model")
+
+
+def test_expand_arms_live_false_restores_legacy_names():
+    arms = expand_arms(["claude-opus-5"], ["board"], ["low"], live=False)
+    assert "claude-opus-5/board/low" in [a.name for a in arms]
+
+
+def test_run_arm_live_builds_a_paced_emulator_and_live_agent(monkeypatch):
+    from tetris_agent.benchmark import run_arm
+
+    captured = {}
+
+    class FakeEmu:
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            captured["emu"] = {"headless": headless, "speed": speed}
+
+        def stop(self):
+            captured["stopped"] = True
+
+    class FakeLiveAgent:
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None):
+            self.live_stats = {"late": 2, "worker_errors": 0, "in_flight_at_end": False}
+
+        def run(self, timer_div=None, level=0):
+            captured["level"] = level
+            return fitness()
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.live_agent.LiveTetrisAgent", FakeLiveAgent)
+    arm = Arm("model", "pi/gemma3", "features", None, live=True)
+
+    result = run_arm(arm, seed=0, rom_path="rom.gb", max_pieces=5, level=3)
+
+    assert captured["emu"] == {"headless": True, "speed": 1}
+    assert captured["level"] == 3
+    assert captured["stopped"] is True
+    assert result.policy_stats["late"] == 2
+
+
+def test_run_arm_paused_keeps_the_uncapped_emulator(monkeypatch):
+    from tetris_agent.benchmark import run_arm
+
+    captured = {}
+
+    class FakeEmu:
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            captured["emu"] = {"headless": headless, "speed": speed}
+
+        def stop(self):
+            pass
+
+    class FakeAgent:
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None):
+            pass
+
+        def run(self, timer_div=None):
+            return fitness()
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.agent.TetrisAgent", FakeAgent)
+    arm = Arm("model", "pi/gemma3", "features", None, live=False)
+
+    result = run_arm(arm, seed=0, rom_path="rom.gb", max_pieces=5)
+
+    assert captured["emu"]["speed"] == 0
+    assert "late" not in result.policy_stats
+
+
+def test_summarize_sums_late_decisions():
+    results = [
+        ArmResult("live-arm", 0, fitness(), {"late": 3}),
+        ArmResult("live-arm", 1, fitness(), {"late": 2}),
+    ]
+    assert summarize(results)[0]["late"] == 5
+
+
+def test_render_table_includes_late_column():
+    table = render_table(summarize([ArmResult("a", 0, fitness(), {})]))
+    assert "late" in table.splitlines()[0].split()
+
+
+def test_estimate_paused_has_no_live_marker(capsys):
+    assert main(["--models", "claude-opus-5", "--estimate", "--max-pieces", "5", "--paused"]) == 0
+    out = capsys.readouterr().out
+    assert "+live" not in out
+    assert "wall-clock" not in out
+
+
+def test_estimate_live_marks_arms_and_warns_about_wall_clock(capsys):
+    assert main(["--models", "claude-opus-5", "--estimate", "--max-pieces", "5"]) == 0
+    out = capsys.readouterr().out
+    assert "+live" in out
+    assert "wall-clock" in out
+
+
+def test_summarize_reports_mean_tokens_per_second():
+    results = [
+        ArmResult("a", 0, fitness(), {"tokens_per_second": 30.0}),
+        ArmResult("a", 1, fitness(), {"tokens_per_second": 10.0}),
+    ]
+    assert summarize(results)[0]["tok_s"] == 20.0
+
+
+def test_render_table_includes_tok_s_column():
+    table = render_table(summarize([ArmResult("a", 0, fitness(), {})]))
+    assert "tok_s" in table.splitlines()[0].split()

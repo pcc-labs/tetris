@@ -27,6 +27,7 @@ class Config:
     no_self_heal: bool
     window: str
     live: bool
+    level: int
     viewer_url: str
     policy: str
     model: str
@@ -49,7 +50,16 @@ def build_config(argv=None) -> Config:
     parser.add_argument("--no-self-heal", action="store_true")
     parser.add_argument("--window", default="null", choices=["null", "SDL2"])
     parser.add_argument(
-        "--live", action="store_true", help="real-time speed + stream frames/events to the browser viewer"
+        "--live",
+        action="store_true",
+        help="play in real time — gravity keeps running while the model thinks; streams to the viewer",
+    )
+    parser.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        choices=range(10),
+        help="starting level/gravity for --live; ignored otherwise",
     )
     parser.add_argument("--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --live")
     parser.add_argument("--policy", default="heuristic", choices=["heuristic", "model"])
@@ -89,11 +99,21 @@ def build_policy(cfg: Config):
     return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block)
 
 
+def _agent_class(live: bool):
+    """Live runs use the no-pause loop; everything else keeps the frozen one."""
+    if live:
+        from tetris_agent.live_agent import LiveTetrisAgent
+
+        return LiveTetrisAgent
+    from tetris_agent.agent import TetrisAgent
+
+    return TetrisAgent
+
+
 def agent_main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
     cfg = build_config(argv)
 
-    from tetris_agent.agent import TetrisAgent
     from tetris_agent.emulator import Emulator
     from tetris_agent.events import EventCollector
     from tetris_agent.genome import load_params
@@ -118,13 +138,16 @@ def agent_main(argv=None) -> int:
 
     emu = Emulator(cfg.rom, headless=cfg.window == "null", speed=1 if cfg.live else 0)
     try:
-        agent = TetrisAgent(
+        agent = _agent_class(cfg.live)(
             emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces,
             frame_sinks=frame_sinks, policy=build_policy(cfg),
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
-        fitness = agent.run(timer_div=cfg.timer_div)
+        if cfg.live:
+            fitness = agent.run(timer_div=cfg.timer_div, level=cfg.level)
+        else:
+            fitness = agent.run(timer_div=cfg.timer_div)
     finally:
         emu.stop()
         if streamer is not None:

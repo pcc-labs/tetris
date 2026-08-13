@@ -155,3 +155,22 @@ def test_load_exemplar_block_builds_from_verified_traces(tmp_path):
     block = load_exemplar_block(tmp_path)
     assert "How a strong human placed pieces" in block
     assert "rotation=0 col=0" in block
+
+
+def test_late_decisions_are_not_mined(tmp_path):
+    # A late decision describes a piece gravity already placed; pairing it
+    # with the lock would mine a placement that never happened.
+    run_dir = tmp_path / "20260813-000001-bbbbbb"
+    run_dir.mkdir(parents=True)
+    events = [
+        _envelope("session", 0, {"phase": "start", "policy": "human", "timer_div": 0}),
+        _envelope("piece_spawn", 1, {"piece": "O", "next_piece": "O"}),
+        _envelope(
+            "placement_decision",
+            1,
+            {"rotation": 0, "col": 0, "score": 0.0, "late": True, "latency_ms": 18000.0},
+        ),
+        _envelope("piece_locked", 1, {"lines_delta": 0, "misexec": 0, "score": 0, **O_AT_0}),
+    ]
+    (run_dir / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    assert mine_run(run_dir) == []

@@ -18,7 +18,7 @@ import anthropic
 import numpy as np
 
 from tetris_agent.policy import Placement
-from tetris_agent.pricing import cost_usd, spec
+from tetris_agent.pricing import EFFORTS, cost_usd, spec
 from tetris_agent.prompts import (
     PLACEMENT_SCHEMA,
     SYSTEM_PROMPT,
@@ -40,6 +40,7 @@ class LLMPlacementPolicy:
         effort: str | None = "medium",
         max_tokens: int = MAX_TOKENS,
         exemplar_block: str = "",
+        clock=time.monotonic,
     ):
         self.model = model
         self.harness = harness
@@ -47,6 +48,7 @@ class LLMPlacementPolicy:
         # Haiku 4.5 rejects output_config.effort; its arms are effort-free by construction.
         self.effort = effort if self.spec.supports_effort else None
         self.max_tokens = max_tokens
+        self._clock = clock
         # Exemplars are static across the run, so they belong in the system
         # prompt — cached — never in the per-piece user turn.
         self.system_prompt = SYSTEM_PROMPT + (f"\n\n{exemplar_block}" if exemplar_block else "")
@@ -56,6 +58,7 @@ class LLMPlacementPolicy:
             "decisions": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            "thinking_tokens": 0,
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
             "illegal_count": 0,
@@ -63,9 +66,19 @@ class LLMPlacementPolicy:
             "parse_failures": 0,
             "refusals": 0,
             "api_errors": 0,
+            "downshifts": 0,
             "latency_ms_total": 0.0,
+            # Successful calls only: latency_ms_total also counts errors, so
+            # tokens-per-second is derived from this pair, never from it.
+            "gen_ms_total": 0.0,
         }
         self.last_reason = ""
+        self.last_output_tokens: int | None = None
+        # Live mode sets this before each decision; None means no clock.
+        self.deadline_s: float | None = None
+        self._decide_started: float | None = None
+        self._ema_latency_s: float | None = None
+        self._tier_index: int | None = None
 
     # ---- the Policy contract -------------------------------------------------
 
@@ -74,7 +87,7 @@ class LLMPlacementPolicy:
         if not legal:
             return None
 
-        prompt = build_user_prompt(self.harness, board, piece, next_piece, legal, turn)
+        prompt = build_user_prompt(self.harness, board, piece, next_piece, legal, turn, deadline_s=self.deadline_s)
         choice = self._decide(prompt, legal)
         if choice is None:
             # Every attempt failed; keep the run alive with a deterministic
@@ -86,13 +99,16 @@ class LLMPlacementPolicy:
     def stats(self) -> dict:
         u = self.usage
         decisions = max(u["decisions"], 1)
+        gen_s = u["gen_ms_total"] / 1000
         return {
             "policy": self.name,
             "model": self.model,
             "harness": self.harness,
             "effort": self.effort,
-            **{k: v for k, v in u.items() if k != "latency_ms_total"},
+            **{k: v for k, v in u.items() if k not in ("latency_ms_total", "gen_ms_total")},
             "latency_ms_mean": round(u["latency_ms_total"] / decisions, 1),
+            "tokens_per_second": round(u["output_tokens"] / gen_s, 1) if gen_s > 0 else 0.0,
+            "tokens_per_decision": round(u["output_tokens"] / decisions, 1),
             "cost_usd": cost_usd(
                 self.model,
                 u["input_tokens"],
@@ -106,6 +122,7 @@ class LLMPlacementPolicy:
 
     def _decide(self, prompt: str, legal: list):
         """Ask, validate, retry once with the failure explained, then give up."""
+        self._decide_started = self._clock()
         messages = self._history + [{"role": "user", "content": prompt}]
         for attempt in range(2):
             answer = self._call(messages)
@@ -121,6 +138,8 @@ class LLMPlacementPolicy:
                 return match
             self.usage["illegal_count"] += 1
             if attempt == 0:
+                if self._out_of_time():
+                    return None
                 self.usage["retry_count"] += 1
                 options = ", ".join(f"(rot={p.rotation}, col={p.col})" for p in legal)
                 messages = messages + [
@@ -138,6 +157,35 @@ class LLMPlacementPolicy:
     def _call(self, messages: list[dict]) -> dict | None:
         """Return {"rotation", "col", "reason"} or None; account usage/latency/errors."""
         raise NotImplementedError
+
+    def _effort_ladder(self) -> list[str] | None:
+        """Tiers the deadline controller may pick from, floor first, configured last."""
+        if not self.effort:
+            return None
+        return list(EFFORTS[: EFFORTS.index(self.effort) + 1])
+
+    def _choose_effort(self) -> str | None:
+        """The effort for this call: the configured tier, stepped down one level
+        at a time while the observed latency (EMA) can't beat the clock, and
+        back up when there's room. Arm names keep the configured tier."""
+        ladder = self._effort_ladder()
+        if ladder is None:
+            return self.effort
+        if self._tier_index is None:
+            self._tier_index = len(ladder) - 1
+        if self.deadline_s is not None and self._ema_latency_s is not None:
+            if self._ema_latency_s > 0.9 * self.deadline_s and self._tier_index > 0:
+                self._tier_index -= 1
+                self.usage["downshifts"] += 1
+            elif self._ema_latency_s < 0.45 * self.deadline_s and self._tier_index < len(ladder) - 1:
+                self._tier_index += 1
+        return ladder[self._tier_index]
+
+    def _out_of_time(self) -> bool:
+        """A retry means a whole second call; skip it when the clock says no."""
+        if self.deadline_s is None or self._decide_started is None:
+            return False
+        return (self._clock() - self._decide_started) > 0.5 * self.deadline_s
 
     def _remember(self, prompt: str, answer: dict) -> None:
         if self.harness != "chat":
@@ -157,16 +205,18 @@ class ModelPolicy(LLMPlacementPolicy):
         client=None,
         max_tokens: int = MAX_TOKENS,
         exemplar_block: str = "",
+        clock=time.monotonic,
     ):
-        super().__init__(model, harness, effort, max_tokens, exemplar_block)
+        super().__init__(model, harness, effort, max_tokens, exemplar_block, clock=clock)
         self.client = client or anthropic.Anthropic()
 
     def _call(self, messages: list[dict]) -> dict | None:
         output_config: dict = {"format": {"type": "json_schema", "schema": PLACEMENT_SCHEMA}}
-        if self.effort:
-            output_config["effort"] = self.effort
+        effort = self._choose_effort()
+        if effort:
+            output_config["effort"] = effort
 
-        started = time.monotonic()
+        started = self._clock()
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -178,10 +228,13 @@ class ModelPolicy(LLMPlacementPolicy):
         except anthropic.APIError:
             logger.exception("decision call failed")
             self.usage["api_errors"] += 1
-            self.usage["latency_ms_total"] += (time.monotonic() - started) * 1000
+            self.usage["latency_ms_total"] += (self._clock() - started) * 1000
             return None
-        self.usage["latency_ms_total"] += (time.monotonic() - started) * 1000
+        gen_s = self._clock() - started
+        self.usage["latency_ms_total"] += gen_s * 1000
+        self.usage["gen_ms_total"] += gen_s * 1000
         self.usage["decisions"] += 1
+        self._ema_latency_s = gen_s if self._ema_latency_s is None else 0.5 * gen_s + 0.5 * self._ema_latency_s
         self._record_usage(response.usage)
 
         if response.stop_reason == "refusal":
@@ -199,7 +252,11 @@ class ModelPolicy(LLMPlacementPolicy):
             return None
 
     def _record_usage(self, usage) -> None:
+        out = getattr(usage, "output_tokens", 0) or 0
         self.usage["input_tokens"] += getattr(usage, "input_tokens", 0) or 0
-        self.usage["output_tokens"] += getattr(usage, "output_tokens", 0) or 0
+        self.usage["output_tokens"] += out
+        # A subset of output_tokens — never added into cost on top of it.
+        self.usage["thinking_tokens"] += getattr(getattr(usage, "output_tokens_details", None), "thinking_tokens", 0) or 0
         self.usage["cache_read_tokens"] += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.usage["cache_write_tokens"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self.last_output_tokens = out

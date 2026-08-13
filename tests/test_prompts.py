@@ -119,3 +119,17 @@ def test_exemplar_block_empty_pool_is_empty_string():
     from tetris_agent.prompts import build_exemplar_block
 
     assert build_exemplar_block([]) == ""
+
+
+def test_deadline_line_appended_only_when_given():
+    import numpy as np
+
+    from tetris_agent.prompts import build_user_prompt, legal_placements
+
+    board = np.zeros((18, 10), dtype=bool)
+    legal = legal_placements(board, "O")
+    plain = build_user_prompt("features", board, "O", "I", legal, 1)
+    assert "before this piece locks" not in plain
+    timed = build_user_prompt("features", board, "O", "I", legal, 1, deadline_s=7.4)
+    assert timed.startswith(plain)
+    assert "about 7 seconds before this piece locks" in timed

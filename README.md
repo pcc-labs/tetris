@@ -88,6 +88,30 @@ Results land in `data/benchmarks/` and print as a ranked table. Model arms also
 report `illegal` — placements the model proposed that don't fit — which is a
 useful capability signal on its own, separate from score.
 
+Model arms play **live** by default: the game does not pause while the model
+thinks. The decision runs on a worker thread while gravity keeps pulling the
+piece down in real time (level 0 ≈ 15s from spawn to floor), so latency is part
+of the game — the same clock a human plays against. A decision that arrives
+after its piece already locked is discarded and counted in the `late` column,
+and each `placement_decision` event carries its per-piece `latency_ms` and
+`tokens`. Live arms are labeled `+live` and run in real time (50 pieces ≈
+12–15 minutes per arm); `--paused` restores the freeze-while-thinking mode for
+A/B against historical rows, and `--level` raises the gravity.
+
+Latency decomposes as prompt processing plus tokens generated over the model's
+**tokens per second** — reported per arm in the `tok_s` column (with
+`tokens_per_decision` and `thinking_tokens` in the results JSON), so a
+flatlined arm is attributable: low `tok_s` means the hardware or API is slow,
+high tokens-per-decision means the model overspent thinking. Live arms also
+budget themselves to the clock: each decision is told how many seconds remain
+before its piece locks, and an adaptive controller steps the thinking effort
+down one tier at a time (`--thinking off` is the floor for pi arms) while the
+observed latency can't beat the deadline, back up when there's room —
+`downshifts` in the results JSON counts the interventions. The configured
+effort still names the arm, so rows stay comparable. An arm whose floor —
+prompt processing alone, zero thinking — exceeds the clock will still
+flatline, and the numbers now say exactly why.
+
 ## Open-weight arms (pi + Ollama)
 
 Model ids prefixed `pi/` run through the [pi coding agent](https://github.com/earendil-works/pi-mono)
@@ -185,7 +209,7 @@ A Game Boy in your browser — live view and session replay:
 
 ```bash
 uv run tetris-viewer                          # http://127.0.0.1:8000
-uv run tetris-agent --live --max-pieces 60    # streams into the viewer at 1x speed
+uv run tetris-agent --live --max-pieces 60    # no-pause play, streamed into the viewer
 ```
 
 **LIVE** shows the running agent on the LCD with telemetry (score/lines/holes/

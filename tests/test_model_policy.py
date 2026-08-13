@@ -158,3 +158,111 @@ def test_without_exemplars_system_prompt_is_unchanged():
     p = policy([FakeResponse({"rotation": 0, "col": 3, "reason": "x"})])
     p.plan(empty_board(), "O", "I", turn=1)
     assert p.client.messages.calls[0]["system"][0]["text"] == SYSTEM_PROMPT
+
+
+class FakeThinkingDetails:
+    def __init__(self, thinking_tokens):
+        self.thinking_tokens = thinking_tokens
+
+
+class FakeClock:
+    """Scripted monotonic clock; repeats the last time once exhausted."""
+
+    def __init__(self, times):
+        self.times = list(times)
+
+    def __call__(self):
+        return self.times.pop(0) if len(self.times) > 1 else self.times[0]
+
+
+def test_stats_report_thinking_tokens_and_tokens_per_second():
+    usage = FakeUsage(o=40)
+    usage.output_tokens_details = FakeThinkingDetails(30)
+    p = policy(
+        [FakeResponse({"rotation": 0, "col": 3, "reason": "ok"}, usage=usage)],
+        clock=FakeClock([0.0, 0.0, 2.0]),  # decide start, call start, call end
+    )
+    p.plan(empty_board(), "O", "I", turn=1)
+    stats = p.stats()
+    assert stats["thinking_tokens"] == 30
+    assert stats["tokens_per_second"] == 20.0  # 40 output tokens over 2s of generation
+    assert stats["tokens_per_decision"] == 40.0
+    assert p.last_output_tokens == 40
+
+
+def test_api_errors_inflate_latency_mean_but_not_tokens_per_second():
+    import anthropic
+    import httpx
+
+    err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.test"))
+
+    class RaisingMessages(FakeMessages):
+        def create(self, **kwargs):
+            r = self.responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            self.calls.append(kwargs)
+            return r
+
+    client = FakeClient([])
+    client.messages = RaisingMessages([err, FakeResponse({"rotation": 0, "col": 3, "reason": "ok"})])
+    p = ModelPolicy(
+        model="claude-opus-5",
+        client=client,
+        clock=FakeClock([0.0, 0.0, 10.0, 10.0, 10.0, 12.0]),
+    )
+    p.plan(empty_board(), "O", "I", turn=1)  # errors: falls back, 10s of latency
+    p.plan(empty_board(), "O", "I", turn=2)  # succeeds: 2s of generation, 20 tokens
+    stats = p.stats()
+    assert stats["api_errors"] == 1
+    assert stats["latency_ms_mean"] == 12000.0  # error latency still counted
+    assert stats["tokens_per_second"] == 10.0  # but tok/s uses only the clean 2s
+
+
+def test_deadline_reaches_the_user_prompt_but_not_the_cached_system_prompt():
+    p = policy([FakeResponse({"rotation": 0, "col": 3, "reason": "ok"})])
+    p.deadline_s = 6.0
+    p.plan(empty_board(), "O", "I", turn=1)
+    call = p.client.messages.calls[0]
+    assert "about 6 seconds before this piece locks" in call["messages"][-1]["content"]
+    assert "before this piece locks" not in call["system"][0]["text"]
+
+
+def ok(rotation=0, col=3):
+    return FakeResponse({"rotation": rotation, "col": col, "reason": "ok"})
+
+
+def test_effort_steps_down_under_deadline_pressure_and_recovers():
+    # Configured medium -> ladder [low, medium]. A 5s call against a 4s
+    # deadline steps down; a fast call under a roomy deadline steps back up.
+    p = policy([ok(), ok(), ok()], clock=FakeClock([0, 0, 5, 5, 5, 6, 6, 6, 7.5]))
+    p.deadline_s = 4.0
+    p.plan(empty_board(), "O", "I", turn=1)  # no EMA yet: configured medium, takes 5s
+    p.plan(empty_board(), "O", "I", turn=2)  # EMA 5 > 0.9*4 -> low, takes 1s
+    p.deadline_s = 10.0
+    p.plan(empty_board(), "O", "I", turn=3)  # EMA 3 < 0.45*10 -> back to medium
+
+    efforts = [c["output_config"].get("effort") for c in p.client.messages.calls]
+    assert efforts == ["medium", "low", "medium"]
+    assert p.stats()["downshifts"] == 1
+    assert p.stats()["effort"] == "medium"  # arm identity keeps the configured tier
+
+
+def test_no_deadline_means_the_configured_effort_always():
+    p = policy([ok(), ok()], clock=FakeClock([0, 0, 30, 30, 30, 60]))
+    p.plan(empty_board(), "O", "I", turn=1)  # slow, but no clock pressure
+    p.plan(empty_board(), "O", "I", turn=2)
+    efforts = [c["output_config"].get("effort") for c in p.client.messages.calls]
+    assert efforts == ["medium", "medium"]
+    assert p.stats()["downshifts"] == 0
+
+
+def test_illegal_retry_is_skipped_when_the_deadline_is_tight():
+    # The illegal answer alone took 3s of a 4s deadline; a second full call
+    # cannot land in time, so the policy falls back instead of retrying.
+    p = policy([FakeResponse({"rotation": 0, "col": 9, "reason": "off the edge"})], clock=FakeClock([0.0, 0.0, 3.0]))
+    p.deadline_s = 4.0
+    placement = p.plan(empty_board(), "O", "I", turn=1)
+    assert placement is not None  # deterministic fallback
+    assert len(p.client.messages.calls) == 1
+    assert p.stats()["retry_count"] == 0

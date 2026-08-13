@@ -79,3 +79,17 @@ def test_build_policy_returns_heuristic_without_touching_the_api():
     policy = build_policy(build_config([]))
     assert policy.name == "heuristic"
     assert policy.stats()["cost_usd"] == 0.0
+
+
+def test_build_config_parses_level_for_live_gravity():
+    assert build_config(["--live", "--level", "3"]).level == 3
+    assert build_config([]).level == 0
+
+
+def test_agent_class_routes_live_to_the_no_pause_loop():
+    from tetris_agent.agent import TetrisAgent
+    from tetris_agent.cli import _agent_class
+    from tetris_agent.live_agent import LiveTetrisAgent
+
+    assert _agent_class(True) is LiveTetrisAgent
+    assert _agent_class(False) is TetrisAgent

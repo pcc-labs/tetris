@@ -248,7 +248,7 @@ function cycleSpeed() {
 const BENCH_COLS = [
   ["arm", "ARM"], ["race_score", "RACE"], ["score", "SCORE"], ["lines", "LINES"],
   ["pieces", "PIECES"], ["avg_holes", "HOLES"], ["illegal", "ILLEGAL"],
-  ["latency_ms", "MS/DEC"], ["cost_usd", "COST $"],
+  ["late", "LATE"], ["latency_ms", "MS/DEC"], ["tok_s", "TOK/S"], ["cost_usd", "COST $"],
 ];
 
 async function loadBench() {
@@ -275,7 +275,7 @@ async function loadBench() {
     else if (i === 0) tr.className = "winner";
     for (const [key] of BENCH_COLS) {
       const td = tr.insertCell();
-      td.textContent = row[key];
+      td.textContent = row[key] ?? ""; // older result files predate some columns
     }
   });
   body.replaceChildren(table);
