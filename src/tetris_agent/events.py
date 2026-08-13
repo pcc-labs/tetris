@@ -27,10 +27,23 @@ def build_spawn_event(turn: int, piece: str, next_piece: str) -> dict:
     return _envelope("piece_spawn", turn, {"piece": piece, "next_piece": next_piece})
 
 
-def build_decision_event(turn: int, placement: Placement, reason: str = "") -> dict:
+def build_decision_event(
+    turn: int,
+    placement: Placement,
+    reason: str = "",
+    latency_ms: float | None = None,
+    late: bool = False,
+    tokens: int | None = None,
+) -> dict:
     data = asdict(placement)
     if reason:
         data["reason"] = reason
+    if latency_ms is not None:
+        data["latency_ms"] = round(latency_ms, 1)
+    if late:
+        data["late"] = True
+    if tokens is not None:
+        data["tokens"] = tokens
     return _envelope("placement_decision", turn, data)
 
 
@@ -62,8 +75,18 @@ class EventCollector:
         self.turn += 1
         self.publisher.publish(build_spawn_event(self.turn, piece, next_piece))
 
-    def decision(self, placement: Placement, reason: str = "") -> None:
-        self.publisher.publish(build_decision_event(self.turn, placement, reason))
+    def decision(
+        self,
+        placement: Placement,
+        reason: str = "",
+        latency_ms: float | None = None,
+        late: bool = False,
+        turn: int | None = None,
+        tokens: int | None = None,
+    ) -> None:
+        self.publisher.publish(
+            build_decision_event(self.turn if turn is None else turn, placement, reason, latency_ms, late, tokens)
+        )
 
     def locked(self, lines_delta: int, features: Features, misexec: int, score: int = 0) -> None:
         self.publisher.publish(build_locked_event(self.turn, lines_delta, features, misexec, score))

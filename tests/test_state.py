@@ -93,3 +93,10 @@ def test_screenshot_returns_png(rom_path):
     finally:
         emu.stop()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_bottom_row_is_the_lowest_occupied_cell():
+    from tetris_agent.state import FallingPiece
+
+    piece = FallingPiece(name="T", rotation=0, cells=frozenset({(4, 3), (4, 4), (4, 5), (5, 4)}))
+    assert piece.bottom_row == 5

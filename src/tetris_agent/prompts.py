@@ -127,6 +127,7 @@ def build_user_prompt(
     next_piece: str,
     placements: list[LegalPlacement],
     turn: int,
+    deadline_s: float | None = None,
 ) -> str:
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness {harness!r}; known: {HARNESSES}")
@@ -140,30 +141,34 @@ def build_user_prompt(
     )
 
     if harness in ("board", "chat"):
-        return header + "\n\nChoose a rotation and column."
-
-    lines = [f"  rotation={p.rotation} col={p.col}" for p in placements]
-    if harness == "legal":
-        return (
+        body = header + "\n\nChoose a rotation and column."
+    elif harness == "legal":
+        lines = [f"  rotation={p.rotation} col={p.col}" for p in placements]
+        body = (
             header
             + "\n\nLegal placements:\n"
             + "\n".join(lines)
             + "\n\nChoose one of them."
         )
-
-    detailed = [
-        f"  rotation={p.rotation} col={p.col} -> clears {p.lines} line(s), "
-        f"holes {p.features.holes}, aggregate height {p.features.agg_height}, "
-        f"bumpiness {p.features.bumpiness}, max height {p.features.max_height}"
-        for p in placements
-    ]
-    return (
-        header
-        + "\n\nLegal placements, each with the resulting board after it locks:\n"
-        + "\n".join(detailed)
-        + "\n\nChoose one of them. The numbers describe consequences, not a ranking — "
-        "weigh them yourself."
-    )
+    else:
+        detailed = [
+            f"  rotation={p.rotation} col={p.col} -> clears {p.lines} line(s), "
+            f"holes {p.features.holes}, aggregate height {p.features.agg_height}, "
+            f"bumpiness {p.features.bumpiness}, max height {p.features.max_height}"
+            for p in placements
+        ]
+        body = (
+            header
+            + "\n\nLegal placements, each with the resulting board after it locks:\n"
+            + "\n".join(detailed)
+            + "\n\nChoose one of them. The numbers describe consequences, not a ranking — "
+            "weigh them yourself."
+        )
+    if deadline_s is not None:
+        # Live mode: the game does not pause. This stays in the (uncached)
+        # user turn — the system prompt must remain byte-identical.
+        body += f"\n\nYou have about {deadline_s:.0f} seconds before this piece locks. Answer immediately."
+    return body
 
 
 def build_exemplar_block(exemplars) -> str:

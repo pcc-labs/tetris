@@ -30,6 +30,7 @@ class Arm:
     harness: str | None = None
     effort: str | None = None
     exemplars: bool = False  # human exemplars in the system prompt
+    live: bool = False  # gravity keeps running while the model thinks
 
     @property
     def name(self) -> str:
@@ -38,7 +39,7 @@ class Arm:
         parts = [self.model, self.harness]
         if self.effort:
             parts.append(self.effort)
-        return "/".join(parts) + ("+ex" if self.exemplars else "")
+        return "/".join(parts) + ("+ex" if self.exemplars else "") + ("+live" if self.live else "")
 
 
 @dataclass
@@ -66,17 +67,22 @@ def expand_arms(
     efforts: list[str],
     include_control: bool = True,
     exemplars: bool = False,
+    live: bool = True,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
     Haiku 4.5 does not accept output_config.effort, so it contributes one arm
     per harness instead of one per (harness, effort).
+
+    Model arms default to live: the game does not pause while the model
+    thinks. Baselines stay non-live — their decisions are instant, so pacing
+    them to real time would change nothing but the wall clock.
     """
     arms = [Arm(policy=p) for p in reversed(BASELINE_POLICIES)] if include_control else []
     seen = set()
     for model, harness, effort in itertools.product(models, harnesses, efforts):
         eff = effort if spec(model).supports_effort else None
-        arm = Arm(policy="model", model=model, harness=harness, effort=eff, exemplars=exemplars)
+        arm = Arm(policy="model", model=model, harness=harness, effort=eff, exemplars=exemplars, live=live)
         if arm.name not in seen:
             seen.add(arm.name)
             arms.append(arm)
@@ -109,17 +115,22 @@ def run_arm(
     max_pieces: int,
     genome_params: dict | None = None,
     exemplar_block: str = "",
+    level: int = 0,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent
     from tetris_agent.emulator import Emulator
     from tetris_agent.events import EventCollector
+    from tetris_agent.live_agent import LiveTetrisAgent
     from tetris_agent.policy import Genome
     from tetris_agent.publisher import NoopPublisher
 
     policy = build_policy(arm, genome_params, exemplar_block)
-    emu = Emulator(rom_path)
+    # Live arms need the wall-clock pacer; paused arms run uncapped.
+    emu = Emulator(rom_path, headless=True, speed=1) if arm.live else Emulator(rom_path)
+    agent = None
     try:
-        agent = TetrisAgent(
+        agent_cls = LiveTetrisAgent if arm.live else TetrisAgent
+        agent = agent_cls(
             emu,
             genome=Genome.from_params(genome_params or {}),
             collector=EventCollector(NoopPublisher()),
@@ -127,13 +138,15 @@ def run_arm(
             max_pieces=max_pieces,
             policy=policy,
         )
-        fitness = agent.run(timer_div=seed)
+        fitness = agent.run(timer_div=seed, level=level) if arm.live else agent.run(timer_div=seed)
     except Exception as exc:  # one bad arm must not kill the matrix
         logger.exception("arm %s seed %s failed", arm.name, seed)
-        return ArmResult(arm=arm.name, seed=seed, policy_stats=policy.stats(), error=repr(exc))
+        stats = {**policy.stats(), **getattr(agent, "live_stats", {})}
+        return ArmResult(arm=arm.name, seed=seed, policy_stats=stats, error=repr(exc))
     finally:
         emu.stop()
-    return ArmResult(arm=arm.name, seed=seed, fitness=fitness, policy_stats=policy.stats())
+    stats = {**policy.stats(), **getattr(agent, "live_stats", {})}
+    return ArmResult(arm=arm.name, seed=seed, fitness=fitness, policy_stats=stats)
 
 
 def estimate_cost(arms: list[Arm], seeds: list[int], max_pieces: int, tokens_per_decision: int = 2400) -> float:
@@ -200,8 +213,12 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                 "topped_out": sum(1 for r in scored if r.fitness.get("topped_out")),
                 "race_score": round(sum(race_score(r.fitness) for r in scored) / n, 1),
                 "illegal": sum(r.policy_stats.get("illegal_count", 0) for r in runs),
+                "late": sum(r.policy_stats.get("late", 0) for r in runs),
                 "latency_ms": round(
                     sum(r.policy_stats.get("latency_ms_mean", 0) for r in runs) / max(len(runs), 1), 1
+                ),
+                "tok_s": round(
+                    sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1
                 ),
                 "cost_usd": round(sum(r.cost for r in runs), 4),
             }
@@ -212,7 +229,10 @@ def summarize(results: list[ArmResult]) -> list[dict]:
 def render_table(rows: list[dict]) -> str:
     if not rows:
         return "(no results)"
-    cols = ["arm", "race_score", "score", "lines", "pieces", "avg_holes", "illegal", "latency_ms", "cost_usd"]
+    cols = [
+        "arm", "race_score", "score", "lines", "pieces", "avg_holes",
+        "illegal", "late", "latency_ms", "tok_s", "cost_usd",
+    ]
     widths = {c: max(len(c), max(len(str(r[c])) for r in rows)) for c in cols}
     header = "  ".join(c.ljust(widths[c]) for c in cols)
     sep = "  ".join("-" * widths[c] for c in cols)
@@ -250,6 +270,18 @@ def main(argv=None) -> int:
     parser.add_argument("--rom", default="rom/tetris.gb")
     parser.add_argument("--max-usd", type=float, default=5.0, help="abort the matrix once spend reaches this")
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
+    parser.add_argument(
+        "--paused",
+        action="store_true",
+        help="freeze the emulator during model calls (legacy mode, for A/B against historical rows)",
+    )
+    parser.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        choices=range(10),
+        help="starting level/gravity for live arms (0 = slowest, ~15s per piece)",
+    )
     parser.add_argument("--estimate", action="store_true", help="print a cost projection and exit")
     parser.add_argument("--skip-preflight", action="store_true", help="run pi arms without checking Ollama first")
     parser.add_argument(
@@ -287,11 +319,22 @@ def main(argv=None) -> int:
         args.efforts,
         include_control=not args.no_control,
         exemplars=bool(args.exemplars),
+        live=not args.paused,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
     print(f"arms: {', '.join(a.name for a in arms)}")
     print(f"projected cost: ~${projected:.2f} (cap ${args.max_usd:.2f})")
+    live_runs = sum(1 for a in arms if a.live) * len(args.seeds)
+    if live_runs:
+        from tetris_agent.emulator import Emulator
+
+        secs_per_piece = Emulator._GRAVITY_RELOADS[args.level] * 17 / 60
+        minutes = live_runs * args.max_pieces * secs_per_piece / 60
+        print(
+            f"live arms run in real time: worst case ~{minutes:.0f} min wall-clock "
+            f"(level {args.level}); --paused for the old fast mode"
+        )
     if args.estimate:
         return 0
 
@@ -301,7 +344,7 @@ def main(argv=None) -> int:
         print(f"  [{result.arm} seed={result.seed}] {status}  spent=${spent:.4f}")
 
     def runner(arm, seed, rom_path, max_pieces):
-        return run_arm(arm, seed, rom_path, max_pieces, exemplar_block=exemplar_block)
+        return run_arm(arm, seed, rom_path, max_pieces, exemplar_block=exemplar_block, level=args.level)
 
     results = run_matrix(
         arms, args.seeds, args.rom, max_pieces=args.max_pieces, max_usd=args.max_usd,

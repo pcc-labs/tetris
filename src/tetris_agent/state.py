@@ -31,6 +31,10 @@ class FallingPiece:
     def col(self) -> int:
         return min(c for _, c in self.cells)
 
+    @property
+    def bottom_row(self) -> int:
+        return max(r for r, _ in self.cells)
+
 
 @dataclass(frozen=True)
 class GameState:

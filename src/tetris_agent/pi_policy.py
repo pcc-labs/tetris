@@ -193,17 +193,24 @@ class PiPolicy(LLMPlacementPolicy):
         pi_bin: str = "pi",
         extension: Path = TAPES_EXTENSION,
         exemplar_block: str = "",
+        clock=time.monotonic,
     ):
         if not model.startswith(PI_PREFIX):
             raise ValueError(f"PiPolicy needs a {PI_PREFIX}* model id, got {model!r}")
-        super().__init__(model, harness, effort, exemplar_block=exemplar_block)
+        super().__init__(model, harness, effort, exemplar_block=exemplar_block, clock=clock)
         self.ollama_model = model.removeprefix(PI_PREFIX)
         self.runner = runner or _run_pi
         self.timeout_s = timeout_s
         self.pi_bin = pi_bin
         self.extension = extension
 
-    def _build_cmd(self, prompt: str) -> list[str]:
+    def _effort_ladder(self) -> list[str] | None:
+        # pi's --thinking accepts "off", so the deadline controller can turn
+        # thinking entirely off — the true floor for a local model.
+        ladder = super()._effort_ladder()
+        return ["off"] + ladder if ladder else None
+
+    def _build_cmd(self, prompt: str, effort: str | None = None) -> list[str]:
         cmd = [
             self.pi_bin,
             "-p",
@@ -225,8 +232,8 @@ class PiPolicy(LLMPlacementPolicy):
             "-e",
             str(self.extension),
         ]
-        if self.effort:
-            cmd += ["--thinking", self.effort]
+        if effort:
+            cmd += ["--thinking", effort]
         cmd.append(prompt)
         return cmd
 
@@ -237,24 +244,33 @@ class PiPolicy(LLMPlacementPolicy):
         return turns + "\n\nReply to the last [user] turn."
 
     def _call(self, messages: list[dict]) -> dict | None:
-        cmd = self._build_cmd(self._render_transcript(messages) + PI_PROMPT_SUFFIX)
-        started = time.monotonic()
+        cmd = self._build_cmd(self._render_transcript(messages) + PI_PROMPT_SUFFIX, effort=self._choose_effort())
+        # Under a live deadline, one slow local call must not blank a dozen
+        # pieces — cap the subprocess at twice the piece's fall time.
+        timeout = self.timeout_s
+        if self.deadline_s is not None:
+            timeout = min(self.timeout_s, max(15.0, 2 * self.deadline_s))
+        started = self._clock()
         try:
-            proc = self.runner(cmd, self.timeout_s)
+            proc = self.runner(cmd, timeout)
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning("pi decision call failed: %s", exc)
             self.usage["api_errors"] += 1
-            self.usage["latency_ms_total"] += (time.monotonic() - started) * 1000
+            self.usage["latency_ms_total"] += (self._clock() - started) * 1000
             return None
-        self.usage["latency_ms_total"] += (time.monotonic() - started) * 1000
+        gen_s = self._clock() - started
+        self.usage["latency_ms_total"] += gen_s * 1000
         if proc.returncode != 0:
             logger.warning("pi exited %d: %s", proc.returncode, (proc.stderr or "")[-500:])
             self.usage["api_errors"] += 1
             return None
 
         text, usage, error = _final_assistant_output(proc.stdout)
+        out = usage.get("output", 0) or 0
         self.usage["input_tokens"] += usage.get("input", 0) or 0
-        self.usage["output_tokens"] += usage.get("output", 0) or 0
+        self.usage["output_tokens"] += out
+        # pi calls thinking tokens "reasoning"; a subset of output, like Anthropic's.
+        self.usage["thinking_tokens"] += usage.get("reasoning", 0) or 0
         self.usage["cache_read_tokens"] += usage.get("cacheRead", 0) or 0
         self.usage["cache_write_tokens"] += usage.get("cacheWrite", 0) or 0
         if error is not None:
@@ -264,6 +280,11 @@ class PiPolicy(LLMPlacementPolicy):
             self.usage["api_errors"] += 1
             return None
         self.usage["decisions"] += 1
+        # Subprocess wall clock (includes node startup), so pi tok/s reads low —
+        # still comparable across pi arms on the same machine.
+        self.usage["gen_ms_total"] += gen_s * 1000
+        self._ema_latency_s = gen_s if self._ema_latency_s is None else 0.5 * gen_s + 0.5 * self._ema_latency_s
+        self.last_output_tokens = out
 
         answer = _extract_json(text) if text else None
         if answer is None:

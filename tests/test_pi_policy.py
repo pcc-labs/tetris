@@ -27,9 +27,11 @@ class FakeRunner:
     def __init__(self, results):
         self.results = list(results)
         self.calls = []
+        self.timeouts = []
 
     def __call__(self, cmd, timeout_s):
         self.calls.append(cmd)
+        self.timeouts.append(timeout_s)
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -320,3 +322,55 @@ def test_exemplar_block_reaches_the_pi_system_prompt():
     system = cmd[cmd.index("--system-prompt") + 1]
     assert "EXEMPLARS" in system
     assert "Return ONLY" in system or "JSON" in system  # pi's format contract still appended
+
+
+class FakeClock:
+    """Scripted monotonic clock; repeats the last time once exhausted."""
+
+    def __init__(self, times):
+        self.times = list(times)
+
+    def __call__(self):
+        return self.times.pop(0) if len(self.times) > 1 else self.times[0]
+
+
+def test_reasoning_tokens_and_tokens_per_second_from_pi_usage():
+    usage = {"input": 121, "output": 30, "cacheRead": 0, "cacheWrite": 0, "reasoning": 12}
+    p = policy(
+        [completed(jsonl_events('{"rotation": 0, "col": 3, "reason": "ok"}', usage=usage))],
+        clock=FakeClock([0.0, 0.0, 3.0]),  # decide start, call start, call end
+    )
+    p.plan(empty_board(), "O", "I", turn=1)
+    stats = p.stats()
+    assert stats["thinking_tokens"] == 12
+    assert stats["tokens_per_second"] == 10.0  # 30 output tokens over 3s
+    assert stats["tokens_per_decision"] == 30.0
+    assert p.last_output_tokens == 30
+
+
+def ok_events():
+    return completed(jsonl_events('{"rotation": 0, "col": 3, "reason": "ok"}'))
+
+
+def test_pi_effort_ladder_bottoms_out_at_thinking_off():
+    p = policy(
+        [ok_events(), ok_events(), ok_events()],
+        clock=FakeClock([0, 0, 5, 5, 5, 10, 10, 10, 15]),
+    )
+    p.deadline_s = 1.0
+    p.plan(empty_board(), "O", "I", turn=1)  # configured medium
+    p.plan(empty_board(), "O", "I", turn=2)  # EMA 5 > 0.9 -> low
+    p.plan(empty_board(), "O", "I", turn=3)  # still over -> off
+
+    runner = p.runner
+    tiers = [cmd[cmd.index("--thinking") + 1] for cmd in runner.calls]
+    assert tiers == ["medium", "low", "off"]
+    assert p.stats()["downshifts"] == 2
+
+
+def test_pi_timeout_is_capped_by_the_deadline():
+    p = policy([ok_events(), ok_events()])
+    p.plan(empty_board(), "O", "I", turn=1)  # no deadline: configured timeout
+    p.deadline_s = 5.0
+    p.plan(empty_board(), "O", "I", turn=2)  # capped at max(15, 2*deadline)
+    assert p.runner.timeouts == [180.0, 15.0]

@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from tetris_agent.board import Features
-from tetris_agent.events import SCHEMA, EventCollector, build_spawn_event
+from tetris_agent.events import SCHEMA, EventCollector, build_decision_event, build_spawn_event
 from tetris_agent.policy import Placement
 from tetris_agent.publisher import JSONLPublisher, NoopPublisher
 
@@ -35,6 +35,39 @@ def test_collector_increments_turn_on_spawn_and_publishes():
     assert types == ["session", "piece_spawn", "placement_decision", "piece_locked", "piece_spawn"]
 
 
+def test_decision_event_carries_no_timing_keys_by_default():
+    event = build_decision_event(2, Placement(rotation=1, col=3, score=0.5))
+    assert set(event["data"]) == {"rotation", "col", "score"}
+
+
+def test_decision_event_includes_latency_when_given():
+    event = build_decision_event(2, Placement(rotation=1, col=3, score=0.5), latency_ms=1234.56)
+    assert event["data"]["latency_ms"] == 1234.6
+    assert "late" not in event["data"]
+
+
+def test_decision_event_marks_late_only_when_true():
+    event = build_decision_event(2, Placement(rotation=1, col=3, score=0.5), latency_ms=20000.0, late=True)
+    assert event["data"]["late"] is True
+
+
+def test_collector_decision_accepts_turn_override_for_late_arrivals():
+    seen = []
+
+    class Capture:
+        def publish(self, event):
+            seen.append(event)
+
+    collector = EventCollector(Capture())
+    collector.spawn("J", "O")
+    collector.spawn("O", "T")
+    collector.decision(Placement(rotation=0, col=4, score=0.0), latency_ms=18000.0, late=True, turn=1)
+    assert seen[-1]["turn"] == 1
+    assert seen[-1]["data"]["late"] is True
+    collector.decision(Placement(rotation=0, col=4, score=0.0))
+    assert seen[-1]["turn"] == 2
+
+
 def test_jsonl_publisher_writes_date_partitioned_lines(tmp_path):
     pub = JSONLPublisher(tmp_path, session_id="abc123")
     pub.publish(build_spawn_event(1, "I", "T"))
@@ -48,3 +81,10 @@ def test_jsonl_publisher_writes_date_partitioned_lines(tmp_path):
 
 def test_noop_publisher_swallows():
     NoopPublisher().publish({"anything": 1})
+
+
+def test_decision_event_includes_tokens_only_when_given():
+    plain = build_decision_event(2, Placement(rotation=1, col=3, score=0.5), latency_ms=10.0)
+    assert "tokens" not in plain["data"]
+    counted = build_decision_event(2, Placement(rotation=1, col=3, score=0.5), latency_ms=10.0, tokens=180)
+    assert counted["data"]["tokens"] == 180
