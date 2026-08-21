@@ -12,3 +12,6 @@ dist/
 .worktrees/
 .DS_Store
 .claude/plans/
+
+# never commit ROMs (copyrighted)
+*.gb
