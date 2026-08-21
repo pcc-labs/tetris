@@ -30,6 +30,10 @@ MODELS: dict[str, ModelSpec] = {
     "pi/gpt-oss:20b": ModelSpec("pi/gpt-oss:20b", 0.0, 0.0, True, 0),
     "pi/glm-4.7-flash": ModelSpec("pi/glm-4.7-flash", 0.0, 0.0, True, 0),
     "pi/qwen3.6:27b": ModelSpec("pi/qwen3.6:27b", 0.0, 0.0, True, 0),
+    # num_ctx-capped variants: stock glm/qwen auto-size to 202k/262k and the
+    # runner dies loading them on the iGPU. Same blobs, PARAMETER num_ctx 32768.
+    "pi/glm-4.7-flash-32k": ModelSpec("pi/glm-4.7-flash-32k", 0.0, 0.0, True, 0),
+    "pi/qwen3.6-27b-32k": ModelSpec("pi/qwen3.6-27b-32k", 0.0, 0.0, True, 0),
     "pi/qwen3:8b": ModelSpec("pi/qwen3:8b", 0.0, 0.0, False, 0),
     "pi/gemma3": ModelSpec("pi/gemma3", 0.0, 0.0, False, 0),
 }
