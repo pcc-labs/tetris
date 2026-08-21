@@ -256,7 +256,15 @@ class PiPolicy(LLMPlacementPolicy):
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning("pi decision call failed: %s", exc)
             self.usage["api_errors"] += 1
-            self.usage["latency_ms_total"] += (self._clock() - started) * 1000
+            gen_s = self._clock() - started
+            self.usage["latency_ms_total"] += gen_s * 1000
+            if isinstance(exc, subprocess.TimeoutExpired):
+                # The call never finished, so there is no decision to time —
+                # but the timeout is the clearest evidence the controller gets
+                # that this tier can't beat the clock. Without it a model that
+                # always deliberates past the deadline never steps down to
+                # thinking off (the pattern that flatlined glm-4.7-flash-32k).
+                self._ema_latency_s = gen_s if self._ema_latency_s is None else 0.5 * gen_s + 0.5 * self._ema_latency_s
             return None
         gen_s = self._clock() - started
         self.usage["latency_ms_total"] += gen_s * 1000

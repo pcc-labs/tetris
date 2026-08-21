@@ -123,8 +123,8 @@ uv run tetris-bench --models claude-haiku-4-5 pi/gpt-oss:20b \
                     --harnesses features --efforts medium --max-pieces 10
 ```
 
-Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`
-(thinking-capable — effort maps onto pi's `--thinking` level verbatim) and
+Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`,
+`pi/nemotron-3.5-lightning-32k` (thinking-capable — effort maps onto pi's `--thinking` level verbatim) and
 `pi/qwen3:8b`, `pi/gemma3` (effort-free, they collapse like Haiku). Any other
 `pi/<model>` id is accepted as a free, effort-free arm, so anything in
 `ollama list` works. pi arms cost $0 but not zero time — a 20B-class decision

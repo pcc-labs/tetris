@@ -374,3 +374,23 @@ def test_pi_timeout_is_capped_by_the_deadline():
     p.deadline_s = 5.0
     p.plan(empty_board(), "O", "I", turn=2)  # capped at max(15, 2*deadline)
     assert p.runner.timeouts == [180.0, 15.0]
+
+
+def test_a_timed_out_call_counts_as_latency_so_the_controller_downshifts():
+    # A model that deliberates past the clock never completes a call, so the
+    # EMA would never learn it is slow. The timeout itself is the evidence.
+    timeout = subprocess.TimeoutExpired(cmd="pi", timeout=15)
+    p = policy(
+        [timeout, timeout, ok_events()],
+        clock=FakeClock([0, 0, 15, 15, 15, 30, 30, 30, 31]),
+    )
+    p.deadline_s = 7.0
+    p.plan(empty_board(), "O", "I", turn=1)  # configured medium, times out
+    p.plan(empty_board(), "O", "I", turn=2)  # EMA 15 > 0.9*7 -> low, times out
+    p.plan(empty_board(), "O", "I", turn=3)  # still over -> off, answers in 1s
+
+    tiers = [cmd[cmd.index("--thinking") + 1] for cmd in p.runner.calls]
+    assert tiers == ["medium", "low", "off"]
+    assert p.stats()["downshifts"] == 2
+    assert p.usage["api_errors"] == 2
+    assert p.usage["decisions"] == 1
