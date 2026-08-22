@@ -31,6 +31,9 @@ class Arm:
     effort: str | None = None
     exemplars: bool = False  # human exemplars in the system prompt
     live: bool = False  # gravity keeps running while the model thinks
+    # Bounded pause: the game freezes once per piece while the model thinks,
+    # but a decision slower than this is discarded and the piece falls.
+    deadline_s: float | None = None
 
     @property
     def name(self) -> str:
@@ -39,7 +42,12 @@ class Arm:
         parts = [self.model, self.harness]
         if self.effort:
             parts.append(self.effort)
-        return "/".join(parts) + ("+ex" if self.exemplars else "") + ("+live" if self.live else "")
+        suffix = "+ex" if self.exemplars else ""
+        if self.live:
+            suffix += "+live"
+        elif self.deadline_s is not None:
+            suffix += f"+p{self.deadline_s:g}"
+        return "/".join(parts) + suffix
 
 
 @dataclass
@@ -68,6 +76,7 @@ def expand_arms(
     include_control: bool = True,
     exemplars: bool = False,
     live: bool = True,
+    deadline_s: float | None = None,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -82,7 +91,15 @@ def expand_arms(
     seen = set()
     for model, harness, effort in itertools.product(models, harnesses, efforts):
         eff = effort if spec(model).supports_effort else None
-        arm = Arm(policy="model", model=model, harness=harness, effort=eff, exemplars=exemplars, live=live)
+        arm = Arm(
+            policy="model",
+            model=model,
+            harness=harness,
+            effort=eff,
+            exemplars=exemplars,
+            live=live,
+            deadline_s=None if live else deadline_s,
+        )
         if arm.name not in seen:
             seen.add(arm.name)
             arms.append(arm)
@@ -102,10 +119,36 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
 
-        return PiPolicy(model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block)
+        return PiPolicy(
+            model=arm.model,
+            harness=arm.harness,
+            effort=arm.effort,
+            exemplar_block=block,
+            # Bounded pause: the deadline is the whole budget, kill at the mark.
+            hard_deadline=arm.deadline_s is not None and not arm.live,
+        )
     from tetris_agent.model_policy import ModelPolicy
 
     return ModelPolicy(model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block)
+
+
+def _arm_meta(arm: Arm, seed: int, max_pieces: int) -> dict:
+    """The identity the viewer's banner renders: who is playing, under what rules."""
+    if arm.live:
+        mode = "live"
+    elif arm.deadline_s is not None:
+        mode = f"paused, {arm.deadline_s:g}s/decision"
+    else:
+        mode = "paused"
+    return {
+        "arm": arm.name,
+        "model": arm.model or arm.policy,
+        "harness": arm.harness,
+        "effort": arm.effort,
+        "mode": mode,
+        "seed": seed,
+        "max_pieces": max_pieces,
+    }
 
 
 def run_arm(
@@ -116,36 +159,47 @@ def run_arm(
     genome_params: dict | None = None,
     exemplar_block: str = "",
     level: int = 0,
+    streamer=None,
 ) -> ArmResult:
-    from tetris_agent.agent import TetrisAgent
+    from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
     from tetris_agent.events import EventCollector
+    from tetris_agent.live import LiveEventSink
     from tetris_agent.live_agent import LiveTetrisAgent
     from tetris_agent.policy import Genome
     from tetris_agent.publisher import NoopPublisher
 
     policy = build_policy(arm, genome_params, exemplar_block)
-    # Live arms need the wall-clock pacer; paused arms run uncapped.
-    emu = Emulator(rom_path, headless=True, speed=1) if arm.live else Emulator(rom_path)
+    # Live arms need the wall-clock pacer. Paused arms run uncapped — unless a
+    # viewer is watching, in which case real time is the point.
+    paced = arm.live or streamer is not None
+    emu = Emulator(rom_path, headless=True, speed=1) if paced else Emulator(rom_path)
+    publisher = NoopPublisher() if streamer is None else _Tee(NoopPublisher(), LiveEventSink(streamer))
+    frame_sinks = [] if streamer is None else [streamer.send_frame]
     agent = None
     try:
         agent_cls = LiveTetrisAgent if arm.live else TetrisAgent
         agent = agent_cls(
             emu,
             genome=Genome.from_params(genome_params or {}),
-            collector=EventCollector(NoopPublisher()),
+            collector=EventCollector(publisher),
             recorder=None,
             max_pieces=max_pieces,
             policy=policy,
+            frame_sinks=frame_sinks,
+            decision_deadline_s=arm.deadline_s,
+            session_meta=_arm_meta(arm, seed, max_pieces),
         )
+        if streamer is not None:
+            emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
         fitness = agent.run(timer_div=seed, level=level) if arm.live else agent.run(timer_div=seed)
     except Exception as exc:  # one bad arm must not kill the matrix
         logger.exception("arm %s seed %s failed", arm.name, seed)
-        stats = {**policy.stats(), **getattr(agent, "live_stats", {})}
+        stats = {**policy.stats(), **getattr(agent, "live_stats", {}), **getattr(agent, "paused_stats", {})}
         return ArmResult(arm=arm.name, seed=seed, policy_stats=stats, error=repr(exc))
     finally:
         emu.stop()
-    stats = {**policy.stats(), **getattr(agent, "live_stats", {})}
+    stats = {**policy.stats(), **getattr(agent, "live_stats", {}), **getattr(agent, "paused_stats", {})}
     return ArmResult(arm=arm.name, seed=seed, fitness=fitness, policy_stats=stats)
 
 
@@ -201,6 +255,13 @@ def summarize(results: list[ArmResult]) -> list[dict]:
     for arm, runs in by_arm.items():
         scored = [r for r in runs if r.fitness]
         n = max(len(scored), 1)
+        latencies = [ms for r in runs for ms in r.policy_stats.get("decision_latencies_ms", [])]
+
+        def pct_le(cap_ms: float) -> float:
+            if not latencies:
+                return 0.0
+            return round(100 * sum(1 for ms in latencies if ms <= cap_ms) / len(latencies), 1)
+
         rows.append(
             {
                 "arm": arm,
@@ -214,6 +275,9 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                 "race_score": round(sum(race_score(r.fitness) for r in scored) / n, 1),
                 "illegal": sum(r.policy_stats.get("illegal_count", 0) for r in runs),
                 "late": sum(r.policy_stats.get("late", 0) for r in runs),
+                "timeouts": sum(r.policy_stats.get("timeouts", 0) for r in runs),
+                "pct_le_10s": pct_le(10_000),
+                "pct_le_15s": pct_le(15_000),
                 "latency_ms": round(
                     sum(r.policy_stats.get("latency_ms_mean", 0) for r in runs) / max(len(runs), 1), 1
                 ),
@@ -231,7 +295,8 @@ def render_table(rows: list[dict]) -> str:
         return "(no results)"
     cols = [
         "arm", "race_score", "score", "lines", "pieces", "avg_holes",
-        "illegal", "late", "latency_ms", "tok_s", "cost_usd",
+        "illegal", "late", "timeouts", "pct_le_10s", "pct_le_15s",
+        "latency_ms", "tok_s", "cost_usd",
     ]
     widths = {c: max(len(c), max(len(str(r[c])) for r in rows)) for c in cols}
     header = "  ".join(c.ljust(widths[c]) for c in cols)
@@ -276,6 +341,22 @@ def main(argv=None) -> int:
         help="freeze the emulator during model calls (legacy mode, for A/B against historical rows)",
     )
     parser.add_argument(
+        "--decision-deadline",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="bounded pause: freeze once per piece, but discard any decision slower than this "
+        "and let the piece fall (implies --paused; arms are labeled +p<seconds>)",
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="stream every arm to the viewer's LIVE tab (uv run tetris-viewer) as it plays",
+    )
+    parser.add_argument(
+        "--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --watch"
+    )
+    parser.add_argument(
         "--level",
         type=int,
         default=0,
@@ -293,6 +374,11 @@ def main(argv=None) -> int:
         help="inject verified human traces from RUNS_DIR (default runs/); model arms are labeled +ex",
     )
     args = parser.parse_args(argv)
+
+    if args.decision_deadline is not None and not args.paused:
+        # A bounded pause only means something when the game freezes to think.
+        args.paused = True
+        print(f"--decision-deadline {args.decision_deadline:g} implies --paused (bounded-pause mode)")
 
     if not args.skip_preflight and any(is_pi(m) for m in args.models):
         from tetris_agent.pi_policy import preflight
@@ -320,6 +406,7 @@ def main(argv=None) -> int:
         include_control=not args.no_control,
         exemplars=bool(args.exemplars),
         live=not args.paused,
+        deadline_s=args.decision_deadline,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
@@ -343,8 +430,18 @@ def main(argv=None) -> int:
         status = result.error or f"score={f.get('score', 0)} pieces={f.get('pieces_placed', 0)}"
         print(f"  [{result.arm} seed={result.seed}] {status}  spent=${spent:.4f}")
 
+    streamer = None
+    if args.watch:
+        from tetris_agent.live import LiveStreamer
+
+        streamer = LiveStreamer(args.viewer_url)
+        print(f"streaming arms to the viewer at {args.viewer_url} (LIVE tab)")
+
     def runner(arm, seed, rom_path, max_pieces):
-        return run_arm(arm, seed, rom_path, max_pieces, exemplar_block=exemplar_block, level=args.level)
+        return run_arm(
+            arm, seed, rom_path, max_pieces,
+            exemplar_block=exemplar_block, level=args.level, streamer=streamer,
+        )
 
     results = run_matrix(
         arms, args.seeds, args.rom, max_pieces=args.max_pieces, max_usd=args.max_usd,

@@ -6,7 +6,7 @@
 <title>GRAMBOY · tetris-agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div class="bench">
@@ -70,6 +70,16 @@
     <section class="panel" aria-label="Telemetry">
       <div class="panel-head">TELEMETRY <span id="feed-state" class="feed-state">IDLE</span></div>
 
+      <div id="arm-banner" class="arm-banner hidden">
+        <div class="arm-label">NOW PLAYING</div>
+        <div id="arm-model" class="arm-model"></div>
+        <div id="arm-sub" class="arm-sub"></div>
+        <div class="arm-row">
+          <span id="arm-progress"></span>
+          <span id="arm-status" class="arm-status"></span>
+        </div>
+      </div>
+
       <div class="readouts">
         <div class="readout"><label>SCORE</label><output id="r-score">000000</output></div>
         <div class="readout"><label>LINES</label><output id="r-lines">0000</output></div>
@@ -112,6 +122,6 @@
     <span>fitness → healer → race → genome</span>
   </footer>
 </div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

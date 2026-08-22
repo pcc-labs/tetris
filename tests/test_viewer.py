@@ -118,3 +118,34 @@ def test_static_and_index_are_served_no_cache(tmp_path):
     client = TestClient(create_app(tmp_path))
     assert client.get("/").headers.get("cache-control") == "no-cache"
     assert client.get("/static/app.js").headers.get("cache-control") == "no-cache"
+
+
+def test_late_subscriber_receives_the_last_session_start():
+    """A tab opened mid-arm must still learn who is playing: the hub replays
+    the most recent session-start event to every new /ws/live subscriber."""
+    client = TestClient(create_app("runs"))
+    start = {
+        "type": "event",
+        "event": {"event_type": "session", "data": {"phase": "start", "model": "pi/gpt-oss:20b"}},
+    }
+    with client.websocket_connect("/ws/produce") as producer:
+        producer.send_text(json.dumps(start))
+        with client.websocket_connect("/ws/live") as late:
+            # A sentinel frame after the late join: without replay, this frame
+            # (not the session start) would be the first message received.
+            producer.send_text('{"type": "frame", "turn": 9}')
+            assert json.loads(late.receive_text()) == start
+            assert json.loads(late.receive_text()) == {"type": "frame", "turn": 9}
+
+
+def test_session_end_clears_the_replay_so_idle_tabs_stay_idle():
+    client = TestClient(create_app("runs"))
+    start = {"type": "event", "event": {"event_type": "session", "data": {"phase": "start", "model": "m"}}}
+    end = {"type": "event", "event": {"event_type": "session", "data": {"phase": "end"}}}
+    with client.websocket_connect("/ws/produce") as producer:
+        producer.send_text(json.dumps(start))
+        producer.send_text(json.dumps(end))
+        with client.websocket_connect("/ws/live") as late:
+            with client.websocket_connect("/ws/produce") as p2:
+                p2.send_text('{"type": "frame", "turn": 9}')
+            assert json.loads(late.receive_text()) == {"type": "frame", "turn": 9}

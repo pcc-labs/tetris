@@ -93,3 +93,225 @@ def test_agent_class_routes_live_to_the_no_pause_loop():
 
     assert _agent_class(True) is LiveTetrisAgent
     assert _agent_class(False) is TetrisAgent
+
+
+# ---- bounded pause: --decision-deadline ------------------------------------
+
+
+class TickClock:
+    """Manual monotonic clock the fake policy advances while 'thinking'."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, s):
+        self.t += s
+
+
+class SlowPolicy:
+    """Thinks for a scripted number of clock-seconds, then answers legally."""
+
+    name = "slow"
+
+    def __init__(self, clock, think_s):
+        self.clock = clock
+        self.think_s = think_s
+        self.last_reason = ""
+        self.deadline_s = None
+
+    def plan(self, board, piece, next_piece, turn):
+        from tetris_agent.policy import Placement
+
+        self.clock.advance(self.think_s)
+        return Placement(rotation=0, col=4, score=0.0)
+
+    def stats(self):
+        return {"policy": self.name}
+
+
+class ListPublisher:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, event):
+        self.events.append(event)
+
+
+def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, session_meta=None, policy=None):
+    import numpy as np
+
+    from tetris_agent.agent import TetrisAgent
+    from tetris_agent.controller import ExecResult
+    from tetris_agent.events import EventCollector
+    from tetris_agent.policy import Genome
+
+    clock = TickClock()
+    calls = []
+
+    class FakeController:
+        def __init__(self, emu, ticks_per_press=4):
+            pass
+
+        def execute(self, target):
+            calls.append("execute")
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+        def run_out(self):
+            calls.append("run_out")
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+    class FakeState:
+        def __init__(self, falling):
+            self.falling = falling
+            self.board = np.zeros((18, 10), dtype=bool)
+            self.next_piece = "I"
+            self.game_over = False
+
+    class FakeFalling:
+        name = "O"
+
+    class FakeEmu:
+        score = 0
+        lines = 0
+        level = 0
+
+        def start(self, timer_div=None):
+            pass
+
+        def tick(self, n):
+            pass
+
+    states = []
+    for _ in range(max_pieces):
+        states += [FakeState(FakeFalling()), FakeState(None)]
+
+    def fake_read_state(emu):
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    monkeypatch.setattr("tetris_agent.agent.Controller", FakeController)
+    monkeypatch.setattr("tetris_agent.agent.read_state", fake_read_state)
+
+    publisher = ListPublisher()
+    policy = policy or SlowPolicy(clock, think_s=think_s)
+    agent = TetrisAgent(
+        FakeEmu(),
+        genome=Genome(),
+        collector=EventCollector(publisher),
+        max_pieces=max_pieces,
+        policy=policy,
+        decision_deadline_s=deadline_s,
+        session_meta=session_meta,
+        clock=clock,
+    )
+    return agent, calls, publisher
+
+
+def test_paused_deadline_discards_the_slow_decision_and_lets_the_piece_fall(monkeypatch):
+    agent, calls, publisher = _paused_agent_fixtures(monkeypatch, think_s=20, deadline_s=15.0)
+    fitness = agent.run(timer_div=0)
+
+    assert calls == ["run_out"]  # never executed the stale plan
+    assert agent.paused_stats["timeouts"] == 1
+    assert agent.paused_stats["decision_latencies_ms"] == [20000.0]
+    decision = next(e for e in publisher.events if e["event_type"] == "placement_decision")
+    assert decision["data"]["late"] is True
+    assert decision["data"]["latency_ms"] == 20000.0
+    assert fitness["policy"]["timeouts"] == 1
+
+
+def test_paused_deadline_executes_decisions_that_beat_the_clock(monkeypatch):
+    agent, calls, publisher = _paused_agent_fixtures(monkeypatch, think_s=5, deadline_s=15.0)
+    agent.run(timer_div=0)
+
+    assert calls == ["execute"]
+    assert agent.paused_stats["timeouts"] == 0
+    assert agent.paused_stats["decision_latencies_ms"] == [5000.0]
+    assert agent.policy.deadline_s == 15.0  # the policy was told its budget
+    decision = next(e for e in publisher.events if e["event_type"] == "placement_decision")
+    assert "late" not in decision["data"]
+
+
+def test_paused_agent_without_deadline_keeps_legacy_behavior(monkeypatch):
+    agent, calls, publisher = _paused_agent_fixtures(monkeypatch, think_s=300, deadline_s=None)
+    agent.run(timer_div=0)
+
+    assert calls == ["execute"]
+    assert agent.paused_stats["timeouts"] == 0
+
+
+def test_deadline_survives_policies_that_have_no_deadline_attribute(monkeypatch):
+    class NoDeadlinePolicy(SlowPolicy):
+        def __init__(self, clock, think_s):
+            super().__init__(clock, think_s)
+            del self.deadline_s
+
+    clock = TickClock()
+    agent, calls, _ = _paused_agent_fixtures(
+        monkeypatch, think_s=1, deadline_s=15.0, policy=NoDeadlinePolicy(clock, 1)
+    )
+    agent.run(timer_div=0)  # must not raise
+    assert calls == ["execute"]
+
+
+def test_session_meta_lands_on_the_session_start_event(monkeypatch):
+    meta = {"arm": "pi/gpt-oss:20b/features/medium+p15", "model": "pi/gpt-oss:20b", "seed": 1}
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=1, deadline_s=15.0, session_meta=meta)
+    agent.run(timer_div=1)
+
+    start = next(
+        e for e in publisher.events if e["event_type"] == "session" and e["data"]["phase"] == "start"
+    )
+    assert start["data"]["model"] == "pi/gpt-oss:20b"
+    assert start["data"]["arm"] == "pi/gpt-oss:20b/features/medium+p15"
+
+
+def test_spawn_is_published_before_the_policy_starts_thinking(monkeypatch):
+    """The viewer shows THINKING between spawn and decision; a spawn published
+    after plan() returns would leave the freeze unexplained on screen."""
+    seen = {}
+
+    class ProbePolicy(SlowPolicy):
+        def __init__(self, clock, publisher):
+            super().__init__(clock, think_s=1)
+            self.publisher = publisher
+
+        def plan(self, board, piece, next_piece, turn):
+            seen["spawns_before_plan"] = sum(
+                1 for e in self.publisher.events if e["event_type"] == "piece_spawn"
+            )
+            seen["turn_arg"] = turn
+            return super().plan(board, piece, next_piece, turn)
+
+    clock = TickClock()
+    probe = ProbePolicy(clock, None)
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=1, deadline_s=None, policy=probe)
+    probe.publisher = publisher
+    agent.run(timer_div=0)
+
+    assert seen["spawns_before_plan"] == 1
+    assert seen["turn_arg"] == 1  # turn already advanced by the spawn
+
+
+def test_the_frozen_board_is_captured_at_spawn_so_watchers_see_it(monkeypatch):
+    """During the think-freeze the viewer must show the board being decided on,
+    not the tail of the previous piece's animation."""
+    frames = []
+
+    class ProbeSinkPolicy(SlowPolicy):
+        def plan(self, board, piece, next_piece, turn):
+            frames_at_plan.append(len(frames))
+            return super().plan(board, piece, next_piece, turn)
+
+    frames_at_plan = []
+    clock = TickClock()
+    agent, _, _ = _paused_agent_fixtures(
+        monkeypatch, think_s=1, deadline_s=15.0, policy=ProbeSinkPolicy(clock, 1)
+    )
+    agent.frame_sinks.append(lambda turn, png: frames.append(turn))
+    agent.emu.screenshot = lambda: b"png"
+    agent.run(timer_div=0)
+
+    assert frames_at_plan == [1]  # exactly one frame captured before thinking began

@@ -394,3 +394,13 @@ def test_a_timed_out_call_counts_as_latency_so_the_controller_downshifts():
     assert p.stats()["downshifts"] == 2
     assert p.usage["api_errors"] == 2
     assert p.usage["decisions"] == 1
+
+
+def test_hard_deadline_kills_the_call_at_exactly_the_deadline():
+    # Bounded-pause mode: the game is frozen, so the deadline IS the budget —
+    # no 2x gravity slack like the live path.
+    p = policy([ok_events(), ok_events()], hard_deadline=True)
+    p.plan(empty_board(), "O", "I", turn=1)  # no deadline set: configured timeout
+    p.deadline_s = 15.0
+    p.plan(empty_board(), "O", "I", turn=2)
+    assert p.runner.timeouts == [180.0, 15.0]

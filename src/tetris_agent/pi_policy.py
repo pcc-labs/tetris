@@ -194,6 +194,7 @@ class PiPolicy(LLMPlacementPolicy):
         extension: Path = TAPES_EXTENSION,
         exemplar_block: str = "",
         clock=time.monotonic,
+        hard_deadline: bool = False,
     ):
         if not model.startswith(PI_PREFIX):
             raise ValueError(f"PiPolicy needs a {PI_PREFIX}* model id, got {model!r}")
@@ -203,6 +204,10 @@ class PiPolicy(LLMPlacementPolicy):
         self.timeout_s = timeout_s
         self.pi_bin = pi_bin
         self.extension = extension
+        # Bounded-pause mode: the game is frozen while the model thinks, so the
+        # deadline is the whole budget — kill the subprocess at exactly that
+        # mark instead of granting the live path's 2x gravity slack.
+        self.hard_deadline = hard_deadline
 
     def _effort_ladder(self) -> list[str] | None:
         # pi's --thinking accepts "off", so the deadline controller can turn
@@ -249,7 +254,8 @@ class PiPolicy(LLMPlacementPolicy):
         # pieces — cap the subprocess at twice the piece's fall time.
         timeout = self.timeout_s
         if self.deadline_s is not None:
-            timeout = min(self.timeout_s, max(15.0, 2 * self.deadline_s))
+            slack = self.deadline_s if self.hard_deadline else max(15.0, 2 * self.deadline_s)
+            timeout = min(self.timeout_s, slack)
         started = self._clock()
         try:
             proc = self.runner(cmd, timeout)

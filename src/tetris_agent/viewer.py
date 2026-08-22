@@ -23,6 +23,28 @@ class LiveHub:
 
     def __init__(self):
         self.subscribers: set[WebSocket] = set()
+        # The most recent session-start, replayed to late-joining tabs so a
+        # browser opened mid-arm still learns who is playing (a benchmark arm
+        # can run for many minutes). Cleared on session end.
+        self.last_session_start: str | None = None
+
+    def note(self, message: str) -> None:
+        """Remember session boundaries. Cheap: frames are base64 payloads that
+        cannot contain a quoted "session", so they skip the JSON parse."""
+        if '"session"' not in message:
+            return
+        try:
+            parsed = json.loads(message)
+        except ValueError:
+            return
+        event = parsed.get("event") or {}
+        if event.get("event_type") != "session":
+            return
+        phase = (event.get("data") or {}).get("phase")
+        if phase == "start":
+            self.last_session_start = message
+        elif phase == "end":
+            self.last_session_start = None
 
     async def broadcast(self, message: str) -> None:
         dead = []
@@ -139,6 +161,7 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
         try:
             while True:
                 message = await ws.receive_text()
+                hub.note(message)
                 await hub.broadcast(message)
         except WebSocketDisconnect:
             pass
@@ -172,6 +195,13 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
     @app.websocket("/ws/live")
     async def ws_live(ws: WebSocket):
         await ws.accept()
+        # Replay before subscribing, so the identity always precedes any
+        # broadcast this tab sees.
+        if hub.last_session_start is not None:
+            try:
+                await ws.send_text(hub.last_session_start)
+            except Exception:
+                pass
         hub.subscribers.add(ws)
         try:
             while True:

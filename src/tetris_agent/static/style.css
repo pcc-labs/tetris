@@ -227,3 +227,32 @@ body {
 .bench-table tr.control td:first-child::after { content: " (control)"; font-size: 9px; color: var(--dim); }
 
 .benchfoot { display: flex; justify-content: space-between; padding-top: 22px; font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+
+/* ── arm banner (bench --watch): who is playing right now ── */
+.arm-banner {
+  border: 1px solid var(--bezel);
+  background: var(--bezel-deep);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.arm-banner .arm-label { font-size: 10px; letter-spacing: 2px; color: var(--amber); }
+.arm-banner .arm-model {
+  font-family: var(--pixel);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  margin: 6px 0 4px;
+  word-break: break-all;
+}
+.arm-banner .arm-sub { font-size: 11px; color: var(--dim); }
+.arm-banner .arm-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  margin-top: 6px;
+  color: var(--ink);
+}
+.arm-status.think { color: var(--amber); }
+.arm-status.ok { color: var(--phos); }
+.arm-status.late { color: var(--magenta); }
