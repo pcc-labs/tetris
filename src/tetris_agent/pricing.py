@@ -34,6 +34,10 @@ MODELS: dict[str, ModelSpec] = {
     # runner dies loading them on the iGPU. Same blobs, PARAMETER num_ctx 32768.
     "pi/glm-4.7-flash-32k": ModelSpec("pi/glm-4.7-flash-32k", 0.0, 0.0, True, 0),
     "pi/qwen3.6-27b-32k": ModelSpec("pi/qwen3.6-27b-32k", 0.0, 0.0, True, 0),
+    # Nemotron 3.5 Lightning 30B-A3B MoE: ~67 tok/s steady-state decode on the
+    # iGPU (same bracket as glm-4.7-flash). Native context is 1M, so only the
+    # -32k variant is registered. Leave draft_num_predict at its default.
+    "pi/nemotron-3.5-lightning-32k": ModelSpec("pi/nemotron-3.5-lightning-32k", 0.0, 0.0, True, 0),
     "pi/qwen3:8b": ModelSpec("pi/qwen3:8b", 0.0, 0.0, False, 0),
     "pi/gemma3": ModelSpec("pi/gemma3", 0.0, 0.0, False, 0),
 }
