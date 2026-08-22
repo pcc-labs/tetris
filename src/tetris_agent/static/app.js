@@ -15,6 +15,7 @@ const state = {
   timer: null,
   playMode: false,       // a tetris-play session is live; keyboard is the controller
   inputWs: null,
+  armMax: 0,          // pieces in the arm now streaming (banner progress)
   hud: { score: 0, lines: 0, level: 0, piece: 0, holes: 0, misexec: 0 },
 };
 
@@ -49,11 +50,17 @@ function applyEvent(e) {
     case "piece_spawn":
       state.hud.piece = e.turn;
       tick({ turn: e.turn, text: `spawn ${d.piece} (next ${d.next_piece})` });
+      if (state.armMax) $("arm-progress").textContent = `piece ${e.turn}/${state.armMax}`;
+      setArmStatus("THINKING…", "think");
       break;
-    case "placement_decision":
+    case "placement_decision": {
       tick({ turn: e.turn, text: `plan rot=${d.rotation} col=${d.col}` });
       if (d.reason) tick({ turn: e.turn, text: `“${d.reason}”` }, "reason");
+      const secs = d.latency_ms != null ? ` in ${(d.latency_ms / 1000).toFixed(1)}s` : "";
+      if (d.late) setArmStatus(`TOO SLOW${secs} — dropped`, "late");
+      else setArmStatus(`placed${secs}`, "ok");
       break;
+    }
     case "piece_locked":
       state.hud.lines += d.lines_delta || 0;
       state.hud.holes = d.holes ?? state.hud.holes;
@@ -73,6 +80,10 @@ function applyEvent(e) {
       if (d.fitness?.policy?.cost_usd) {
         tick({ turn: 0, text: `cost $${d.fitness.policy.cost_usd.toFixed(4)}` }, "warn");
       }
+      if (d.phase === "start") showArmBanner(d);
+      if (d.phase === "end" && d.fitness) {
+        setArmStatus(`DONE — score ${d.fitness.score ?? 0}`, "ok");
+      }
       // A browser-play session hands the keyboard to the viewer.
       if (d.phase === "start" && d.surface === "browser") setPlayMode(true);
       if (d.phase === "end") setPlayMode(false);
@@ -85,6 +96,31 @@ function resetHud() {
   state.hud = { score: 0, lines: 0, level: 0, piece: 0, holes: 0, misexec: 0 };
   $("ticker").replaceChildren();
   renderHud();
+}
+
+/* ── arm banner: who is playing right now ── */
+function setArmStatus(text, cls) {
+  const el = $("arm-status");
+  el.textContent = text;
+  el.className = `arm-status${cls ? ` ${cls}` : ""}`;
+}
+
+function showArmBanner(d) {
+  // Benchmark arms announce their identity on session start; human play and
+  // bare agent sessions don't, and keep the plain telemetry layout.
+  if (!d.model) return;
+  resetHud();
+  state.armMax = d.max_pieces || 0;
+  $("arm-model").textContent = d.model;
+  $("arm-sub").textContent = [
+    d.harness && `harness ${d.harness}`,
+    d.effort && `effort ${d.effort}`,
+    d.mode,
+    d.seed != null && `seed ${d.seed}`,
+  ].filter(Boolean).join(" · ");
+  $("arm-progress").textContent = state.armMax ? `piece 0/${state.armMax}` : "";
+  setArmStatus("");
+  $("arm-banner").classList.remove("hidden");
 }
 
 /* ── screen ── */

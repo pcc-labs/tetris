@@ -1,6 +1,7 @@
 """The main loop: spawn → read → plan → execute → emit, then fitness."""
 
 import logging
+import time
 
 from tetris_agent.board import features
 from tetris_agent.controller import Controller
@@ -42,6 +43,9 @@ class TetrisAgent:
         max_pieces: int = 300,
         frame_sinks: list | None = None,
         policy: Policy | None = None,
+        decision_deadline_s: float | None = None,
+        session_meta: dict | None = None,
+        clock=time.monotonic,
     ):
         self.emu = emu
         self.genome = genome
@@ -50,6 +54,14 @@ class TetrisAgent:
         self.recorder = recorder
         self.max_pieces = max_pieces
         self.frame_sinks = list(frame_sinks or [])
+        # Bounded pause: the game still freezes while the policy thinks (once
+        # per piece — plan() is called exactly once), but a decision slower
+        # than this many wall-clock seconds is discarded and the piece falls
+        # untouched, mirroring the live loop's `late` semantics.
+        self.decision_deadline_s = decision_deadline_s
+        self.session_meta = dict(session_meta or {})
+        self._clock = clock
+        self.paused_stats: dict = {"timeouts": 0, "decision_latencies_ms": []}
         if recorder is not None:
             collector.publisher = _Tee(collector.publisher, _RecorderSink(recorder))
             self.frame_sinks.append(recorder.record_frame)
@@ -65,7 +77,12 @@ class TetrisAgent:
         self.emu.start(timer_div=timer_div)
         self.collector.session(
             "start",
-            {"genome": self.genome.to_params(), "timer_div": timer_div, "policy": self.policy.name},
+            {
+                "genome": self.genome.to_params(),
+                "timer_div": timer_div,
+                "policy": self.policy.name,
+                **self.session_meta,
+            },
         )
         tracker = FitnessTracker()
         controller = Controller(self.emu, ticks_per_press=self.genome.ticks_per_press)
@@ -79,17 +96,41 @@ class TetrisAgent:
             if state.game_over:
                 tracker.on_game_over()
                 break
+            if hasattr(self.policy, "deadline_s"):
+                self.policy.deadline_s = self.decision_deadline_s
+            # Spawn first: the viewer renders the think-freeze between spawn
+            # and decision, and live mode already orders events this way. The
+            # frame shows watchers the board being decided on while it's frozen.
+            self.collector.spawn(state.falling.name, state.next_piece)
+            self._capture_frame()
+            plan_started = self._clock()
             placement = self.policy.plan(
-                state.board, state.falling.name, state.next_piece, self.collector.turn + 1
+                state.board, state.falling.name, state.next_piece, self.collector.turn
             )
+            latency_ms = (self._clock() - plan_started) * 1000
             if placement is None:
                 self.collector.stuck(streak=0, detail="no placement fits (top-out imminent)")
                 tracker.on_game_over()
                 break
-            self.collector.spawn(state.falling.name, state.next_piece)
-            self.collector.decision(placement, reason=getattr(self.policy, "last_reason", ""))
+            self.paused_stats["decision_latencies_ms"].append(round(latency_ms, 1))
+            timed_out = (
+                self.decision_deadline_s is not None and latency_ms > self.decision_deadline_s * 1000
+            )
+            self.collector.decision(
+                placement,
+                reason=getattr(self.policy, "last_reason", ""),
+                latency_ms=latency_ms,
+                late=timed_out,
+                tokens=getattr(self.policy, "last_output_tokens", None),
+            )
             self._capture_frame()
-            result = controller.execute(placement)
+            if timed_out:
+                # The answer missed its one pause; discard it and let gravity
+                # place the piece, so a slow model degrades toward no-input.
+                self.paused_stats["timeouts"] += 1
+                result = controller.run_out()
+            else:
+                result = controller.execute(placement)
             post = read_state(self.emu)
             f = features(post.board)
             tracker.on_lock(f, result.misexec)
@@ -106,7 +147,7 @@ class TetrisAgent:
                 break
 
         fitness = tracker.compute(score=self.emu.score, lines=self.emu.lines, level=self.emu.level)
-        fitness["policy"] = self.policy.stats()
+        fitness["policy"] = {**self.policy.stats(), **self.paused_stats}
         self.collector.game_over(fitness)
         self.collector.session("end", {"fitness": fitness})
         if self.recorder is not None:

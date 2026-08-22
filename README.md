@@ -112,6 +112,32 @@ effort still names the arm, so rows stay comparable. An arm whose floor —
 prompt processing alone, zero thinking — exceeds the clock will still
 flatline, and the numbers now say exactly why.
 
+### Bounded pause: `--decision-deadline`
+
+Between full-live and the uncapped legacy `--paused` sits the screening mode:
+
+```bash
+uv run tetris-bench --models pi/gpt-oss:20b --harnesses features \
+                    --decision-deadline 15 --watch --max-pieces 30
+```
+
+The game still freezes exactly once per piece while the model thinks (so
+execution is never racing gravity), but a decision slower than the deadline is
+discarded — the subprocess is killed at the mark for `pi/` arms — and the piece
+falls untouched, counted in the `timeouts` column. Arms are labeled
+`+p<seconds>`, and the summary adds `pct_le_10s` / `pct_le_15s` (share of
+decisions inside 10s/15s, from the per-decision latencies in the results JSON),
+so one run answers "which models can decide a placement in 10–15 seconds?"
+without also making them race the fall animation.
+
+`--watch` streams any matrix — live, paused, or bounded — to the viewer's LIVE
+tab (`uv run tetris-viewer`, then http://127.0.0.1:8000): the board freezes
+while the model thinks, a **NOW PLAYING** banner names the model, harness,
+effort, mode, and seed, and per-piece status shows THINKING… / placed in Ns /
+TOO SLOW — dropped. Watched paused arms run in real time (that is the point);
+unwatched paused arms stay uncapped. A tab opened mid-arm still gets the
+banner — the viewer replays the last session start to late joiners.
+
 ## Open-weight arms (pi + Ollama)
 
 Model ids prefixed `pi/` run through the [pi coding agent](https://github.com/earendil-works/pi-mono)

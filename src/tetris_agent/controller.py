@@ -15,6 +15,9 @@ _MAX_ROTATE_PRESSES = 6
 _MAX_SHIFT_UNVERIFIED = 3
 _MAX_DROP_PRESSES = 220
 _MAX_SPAWN_WAIT = 150
+# Level-0 gravity is ~52 frames/row over 18 rows (~940 frames spawn-to-floor);
+# 2000 ticks of 4 frames covers that several times over at any level.
+_MAX_RUNOUT_TICKS = 2000
 
 
 @dataclass
@@ -87,6 +90,28 @@ class Controller:
                 break
         lines_delta = self._await_spawn(lines_before)
         return ExecResult(locked=locked, misexec=misexec, lines_delta=lines_delta, replanned=replanned)
+
+    def run_out(self) -> ExecResult:
+        """No presses: tick until gravity locks the falling piece.
+
+        The bounded-pause path for a decision that blew its deadline — the
+        stale plan is discarded and the piece falls where it spawned, so a
+        timeout degrades toward no-input instead of executing a late answer.
+        """
+        lines_before = self.emu.lines
+        settled_before = int(read_state(self.emu).board.sum())
+        locked = False
+        for _ in range(_MAX_RUNOUT_TICKS):
+            self.emu.tick(4)
+            state = read_state(self.emu)
+            if state.game_over:
+                locked = True
+                break
+            if int(state.board.sum()) != settled_before or state.falling is None:
+                locked = True
+                break
+        lines_delta = self._await_spawn(lines_before)
+        return ExecResult(locked=locked, misexec=0, lines_delta=lines_delta, replanned=False)
 
     def _lost_piece(self, state: GameState, piece_type: str) -> bool:
         return state.falling is None or state.falling.name != piece_type or state.game_over

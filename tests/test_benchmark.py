@@ -217,7 +217,7 @@ def test_run_arm_live_builds_a_paced_emulator_and_live_agent(monkeypatch):
             captured["stopped"] = True
 
     class FakeLiveAgent:
-        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None):
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None, **kwargs):
             self.live_stats = {"late": 2, "worker_errors": 0, "in_flight_at_end": False}
 
         def run(self, timer_div=None, level=0):
@@ -249,7 +249,7 @@ def test_run_arm_paused_keeps_the_uncapped_emulator(monkeypatch):
             pass
 
     class FakeAgent:
-        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None):
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None, **kwargs):
             pass
 
         def run(self, timer_div=None):
@@ -261,6 +261,7 @@ def test_run_arm_paused_keeps_the_uncapped_emulator(monkeypatch):
 
     result = run_arm(arm, seed=0, rom_path="rom.gb", max_pieces=5)
 
+    assert result.error == ""  # the agent really ran; nothing was swallowed
     assert captured["emu"]["speed"] == 0
     assert "late" not in result.policy_stats
 
@@ -303,3 +304,141 @@ def test_summarize_reports_mean_tokens_per_second():
 def test_render_table_includes_tok_s_column():
     table = render_table(summarize([ArmResult("a", 0, fitness(), {})]))
     assert "tok_s" in table.splitlines()[0].split()
+
+
+# ---- bounded pause (+p15) and --watch --------------------------------------
+
+
+def test_paused_deadline_arms_carry_a_visible_marker():
+    arm = Arm("model", "pi/gpt-oss:20b", "features", "medium", live=False, deadline_s=15.0)
+    assert arm.name == "pi/gpt-oss:20b/features/medium+p15"
+    assert Arm("model", "pi/gemma3", "board", None, live=False).name == "pi/gemma3/board"
+
+
+def test_expand_arms_threads_the_deadline_into_model_arms():
+    arms = expand_arms(
+        ["pi/gpt-oss:20b"], ["features"], ["medium"], include_control=False, live=False, deadline_s=15.0
+    )
+    assert [a.deadline_s for a in arms] == [15.0]
+    assert arms[0].name.endswith("+p15")
+
+
+def test_build_policy_arms_pi_with_a_hard_deadline_only_when_bounded():
+    bounded = build_policy(Arm("model", "pi/gemma3", "board", None, live=False, deadline_s=15.0))
+    live = build_policy(Arm("model", "pi/gemma3", "board", None, live=True))
+    assert bounded.hard_deadline is True
+    assert live.hard_deadline is False
+
+
+def test_run_arm_passes_deadline_and_meta_to_the_paused_agent(monkeypatch):
+    from tetris_agent.benchmark import run_arm
+
+    captured = {}
+
+    class FakeEmu:
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            captured["emu"] = {"headless": headless, "speed": speed}
+
+        def stop(self):
+            pass
+
+    class FakeAgent:
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None, **kwargs):
+            captured["agent_kwargs"] = kwargs
+            captured["collector"] = collector
+            self.paused_stats = {"timeouts": 3, "decision_latencies_ms": [5000.0]}
+
+        def run(self, timer_div=None):
+            return fitness()
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.agent.TetrisAgent", FakeAgent)
+    arm = Arm("model", "pi/gemma3", "features", None, live=False, deadline_s=15.0)
+
+    result = run_arm(arm, seed=7, rom_path="rom.gb", max_pieces=5)
+
+    kwargs = captured["agent_kwargs"]
+    assert kwargs["decision_deadline_s"] == 15.0
+    assert kwargs["session_meta"]["model"] == "pi/gemma3"
+    assert kwargs["session_meta"]["arm"] == arm.name
+    assert kwargs["session_meta"]["seed"] == 7
+    assert kwargs["session_meta"]["max_pieces"] == 5
+    assert result.policy_stats["timeouts"] == 3
+
+
+def test_run_arm_watch_streams_events_and_paces_the_emulator(monkeypatch):
+    from tetris_agent.benchmark import run_arm
+
+    captured = {}
+    sent = []
+
+    class FakeStreamer:
+        def send_event(self, event):
+            sent.append(event)
+
+        def send_frame(self, turn, png):
+            sent.append(("frame", turn))
+
+    class FakeEmu:
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            captured["emu"] = {"headless": headless, "speed": speed}
+            self.frame_hook = None
+
+        def stop(self):
+            pass
+
+    class FakeAgent:
+        def __init__(self, emu, genome=None, collector=None, recorder=None, max_pieces=0, policy=None, **kwargs):
+            captured["collector"] = collector
+            captured["frame_sinks"] = kwargs.get("frame_sinks")
+            self.paused_stats = {}
+
+        def run(self, timer_div=None):
+            captured["collector"].session("start", {})
+            return fitness()
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.agent.TetrisAgent", FakeAgent)
+    arm = Arm("model", "pi/gemma3", "features", None, live=False, deadline_s=15.0)
+
+    run_arm(arm, seed=0, rom_path="rom.gb", max_pieces=5, streamer=FakeStreamer())
+
+    # Watching means real time: the paused emulator is paced, not uncapped.
+    assert captured["emu"]["speed"] == 1
+    assert any(isinstance(e, dict) and e.get("event_type") == "session" for e in sent)
+    assert captured["frame_sinks"], "frames must stream to the viewer"
+
+
+def test_summarize_reports_timeouts_and_deadline_hit_rates():
+    results = [
+        ArmResult(
+            arm="pi/x/features+p15",
+            seed=0,
+            fitness=fitness(),
+            policy_stats={
+                "timeouts": 1,
+                "decision_latencies_ms": [5000.0, 12000.0, 20000.0],
+            },
+        )
+    ]
+    row = summarize(results)[0]
+    assert row["timeouts"] == 1
+    assert row["pct_le_10s"] == 33.3
+    assert row["pct_le_15s"] == 66.7
+
+
+def test_render_table_includes_the_deadline_columns():
+    rows = summarize([ArmResult(arm="a", seed=0, fitness=fitness(), policy_stats={})])
+    table = render_table(rows)
+    assert "timeouts" in table and "pct_le_15s" in table
+
+
+def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
+    rc = main(
+        ["--models", "pi/gemma3", "--harnesses", "board", "--decision-deadline", "15",
+         "--no-control", "--estimate", "--skip-preflight"]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "+p15" in out
+    assert "+live" not in out
