@@ -37,6 +37,22 @@ and chance. The **`heuristic`** arm (the weighted one-piece search in
 `policy.py`) still runs as a control, but it is an exhaustive solver, not a
 player — don't read model arms against it.
 
+## The VM demo
+
+`scripts/vm-demo.sh` runs an open-weight pi arm inside a Lima VM (standing in
+for an exe.dev-style shell computer): the agent plays in the VM, its frames
+stream to the GRAMBOY viewer on the host, and every inference call exits the
+VM through a tapes capture proxy to the host's Ollama — no hosted API in the
+loop, and the whole run lands as one queryable session (project `tetris-vm`,
+`--harness chat` so the conversation chain holds it together). Default arm is
+`pi/gemma3`: it decides in ~2-5s, inside live gravity's ~15s window, where
+thinking models (`pi/qwen3:8b`) blow the per-piece deadline and lose to
+gravity. Expect a scrappy game — that gap between fast-but-weak and
+smart-but-late IS the benchmark's finding, and `--exemplars` (your recorded
+human games in the system prompt) is the lever the repo offers for closing
+it. The script's header comment has the topology; it needs Docker, `tapes`,
+`limactl`, and Ollama.
+
 ## Play it yourself, then let the models learn from you
 
 ```bash
