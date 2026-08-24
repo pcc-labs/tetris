@@ -53,6 +53,35 @@ human games in the system prompt) is the lever the repo offers for closing
 it. The script's header comment has the topology; it needs Docker, `tapes`,
 `limactl`, and Ollama.
 
+### Shipping this to an exe.dev-style setup
+
+The Lima layer is the only local stand-in; everything else maps onto real
+shell computers directly. What changes per piece:
+
+- **The VM** becomes an exe.dev VM. Step 3's provisioning (uv + repo + node +
+  pi + `~/.pi/agent/models.json`) is a plain-English prompt to Shelley or a
+  first-boot script — nothing in it is Lima-specific.
+- **The capture proxy** can't stay on your laptop (a cloud VM can't reach
+  `host.lima.internal`). It moves to one of two places, both already
+  supported: as a sidecar on each VM (`tapes serve proxy` is a single binary;
+  pi's provider `baseUrl` points at `localhost` instead of the host gateway),
+  or on one shared gateway VM that every agent VM's provider config points
+  at — the same boundary where exe already puts its LLM Gateway.
+- **Inference** stays wherever the weights run fast. exe VMs are 2-vCPU
+  CPU-only boxes, so the proxy's `--upstream` points at a GPU box you run, a
+  hosted open-weight endpoint, or exe's own gateway — the capture shape is
+  identical in all three.
+- **Storage centralizes.** Every proxy takes `--postgres <dsn>`: point the
+  whole fleet at one Postgres and every VM's runs land in the same sessions
+  store, with a single `tapes serve api` + `derive-worker` next to the
+  database (both are CPU-light — another exe VM is fine). Locally the demo
+  already runs this exact topology in miniature: the proxy, API, and worker
+  all share `tapes-postgres-1`; a fleet just moves the DSN off-box.
+- **Downstream analytics** is the kafka-cassette's job, not another database:
+  it drains derived span events from the central store to Kafka/Confluent
+  Cloud, which is where dashboards, anomaly detection, and stream processing
+  belong — the tapes Postgres stays the system of record.
+
 ## Play it yourself, then let the models learn from you
 
 ```bash
