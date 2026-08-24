@@ -11,8 +11,8 @@
 #          │         (session → project tetris-vm)
 #          └─ frames → ws://host:8000    GRAMBOY viewer LIVE tab
 #
-# Afterwards the captured session is a tapes session like any other: derive a
-# skill from it (talk-emoji's 📼, or POST /v1/cassettes/skills/generate).
+# Afterwards the captured session is a tapes session like any other — query
+# it, or feed it to a cassette (e.g. POST /v1/cassettes/skills/generate).
 #
 # Usage:  scripts/vm-demo.sh [max_pieces]   (default 15; ~15s/piece at level 0)
 set -euo pipefail
@@ -111,5 +111,5 @@ for s in json.load(sys.stdin)['items']:
     print(s['id'], 'turns:', r.get('turn_count'),
           'calls:', sum(m['calls'] for m in r.get('model_usage', [])))"
 echo
-echo "derive a skill from it: react 📼 in talk-emoji (localhost:7777), or:"
+echo "derive a skill from it:"
 echo '  curl -X POST localhost:8081/v1/cassettes/skills/generate -H "content-type: application/json" -d '"'"'{"sessionIds":["<id>"]}'"'"''
