@@ -37,6 +37,51 @@ and chance. The **`heuristic`** arm (the weighted one-piece search in
 `policy.py`) still runs as a control, but it is an exhaustive solver, not a
 player — don't read model arms against it.
 
+## The VM demo
+
+`scripts/vm-demo.sh` runs an open-weight pi arm inside a Lima VM (standing in
+for an exe.dev-style shell computer): the agent plays in the VM, its frames
+stream to the GRAMBOY viewer on the host, and every inference call exits the
+VM through a tapes capture proxy to the host's Ollama — no hosted API in the
+loop, and the whole run lands as one queryable session (project `tetris-vm`,
+`--harness chat` so the conversation chain holds it together). Default arm is
+`pi/gemma3`: it decides in ~2-5s, inside live gravity's ~15s window, where
+thinking models (`pi/qwen3:8b`) blow the per-piece deadline and lose to
+gravity. Expect a scrappy game — that gap between fast-but-weak and
+smart-but-late IS the benchmark's finding, and `--exemplars` (your recorded
+human games in the system prompt) is the lever the repo offers for closing
+it. The script's header comment has the topology; it needs Docker, `tapes`,
+`limactl`, and Ollama.
+
+### Shipping this to an exe.dev-style setup
+
+The Lima layer is the only local stand-in; everything else maps onto real
+shell computers directly. What changes per piece:
+
+- **The VM** becomes an exe.dev VM. Step 3's provisioning (uv + repo + node +
+  pi + `~/.pi/agent/models.json`) is a plain-English prompt to Shelley or a
+  first-boot script — nothing in it is Lima-specific.
+- **The capture proxy** can't stay on your laptop (a cloud VM can't reach
+  `host.lima.internal`). It moves to one of two places, both already
+  supported: as a sidecar on each VM (`tapes serve proxy` is a single binary;
+  pi's provider `baseUrl` points at `localhost` instead of the host gateway),
+  or on one shared gateway VM that every agent VM's provider config points
+  at — the same boundary where exe already puts its LLM Gateway.
+- **Inference** stays wherever the weights run fast. exe VMs are 2-vCPU
+  CPU-only boxes, so the proxy's `--upstream` points at a GPU box you run, a
+  hosted open-weight endpoint, or exe's own gateway — the capture shape is
+  identical in all three.
+- **Storage centralizes.** Every proxy takes `--postgres <dsn>`: point the
+  whole fleet at one Postgres and every VM's runs land in the same sessions
+  store, with a single `tapes serve api` + `derive-worker` next to the
+  database (both are CPU-light — another exe VM is fine). Locally the demo
+  already runs this exact topology in miniature: the proxy, API, and worker
+  all share `tapes-postgres-1`; a fleet just moves the DSN off-box.
+- **Downstream analytics** is the kafka-cassette's job, not another database:
+  it drains derived span events from the central store to Kafka/Confluent
+  Cloud, which is where dashboards, anomaly detection, and stream processing
+  belong — the tapes Postgres stays the system of record.
+
 ## Play it yourself, then let the models learn from you
 
 ```bash
@@ -87,6 +132,10 @@ letting you find the bill afterwards. One API call per piece adds up fast.
 Results land in `data/benchmarks/` and print as a ranked table. Model arms also
 report `illegal` — placements the model proposed that don't fit — which is a
 useful capability signal on its own, separate from score.
+
+`data/` is gitignored, so those JSON files stay on the machine that made them.
+Results worth keeping go in [`benchmarks/`](benchmarks/) as a dated markdown
+writeup — append-only, one file per run day, every row traceable to a run id.
 
 Model arms play **live** by default: the game does not pause while the model
 thinks. The decision runs on a worker thread while gravity keeps pulling the
@@ -152,14 +201,43 @@ uv run tetris-bench --models claude-haiku-4-5 pi/gpt-oss:20b \
 Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`,
 `pi/nemotron-3.5-lightning-32k` (thinking-capable — effort maps onto pi's `--thinking` level verbatim) and
 `pi/qwen3:8b`, `pi/gemma3` (effort-free, they collapse like Haiku). Any other
-`pi/<model>` id is accepted as a free, effort-free arm, so anything in
-`ollama list` works. pi arms cost $0 but not zero time — a 20B-class decision
-can take tens of seconds, so keep `--max-pieces` modest in pi-heavy matrices.
+`pi/<model>` id is accepted as an unbilled, effort-free arm, so anything in
+`ollama list` works. pi arms bill $0 to an API but are not free — they draw
+watts here instead, which the `energy_wh` / `energy_usd` columns price (see
+below) — and they cost time: a 20B-class decision can take tens of seconds, so
+keep `--max-pieces` modest in pi-heavy matrices.
+
+### What a local arm actually costs
+
+`cost_usd` is an API bill, so a local arm reports `$0.0000` there and that used
+to be the whole story — which read as "free" when it actually means "billed
+somewhere else". Local runs now sample host power and report it:
+
+```
+uv run python -m tetris_agent.power check      # which backend this host offers
+tetris-bench --models pi/gemma3 ...            # energy_wh / energy_usd columns
+```
+
+The figure is **marginal over idle**: a short baseline is sampled before the run
+and subtracted, so it answers "what did this run cost on top of leaving the
+machine on" rather than counting the browser you left open. Watt-hours are
+priced at `DEFAULT_KWH_PRICE` in `pricing.py`, echoed in the summary line so the
+rate is never invisible.
+
+Backends, in the order they are tried: macOS `powermetrics` (needs root — grant
+passwordless sudo for `/usr/bin/powermetrics`, or the column reads `n/a` with the
+reason), Linux `nvidia-smi` + amdgpu hwmon + Intel RAPL for the exe.dev-style VMs
+below. With neither, energy is `n/a` rather than `0.0` — an unmeasured run is
+unknown, not free. `--no-power` opts out.
+
+In `scripts/vm-demo.sh` the sampler runs on the **host**, not in the guest: the
+agent plays inside the VM but inference happens on the host's Ollama, so that is
+where the watts are.
 
 ### What these arms need to run
 
-Open-weight arms are free in dollars and expensive in everything else. Budget
-for all three before starting a matrix:
+Open-weight arms shift cost from a bill to a machine. Budget for all three
+before starting a matrix:
 
 | | measured |
 |---|---|

@@ -208,7 +208,15 @@ class ModelPolicy(LLMPlacementPolicy):
         clock=time.monotonic,
     ):
         super().__init__(model, harness, effort, max_tokens, exemplar_block, clock=clock)
-        self.client = client or anthropic.Anthropic()
+        # X-Tapes-Agent-Name tags captured turns when the traffic exits
+        # through a tapes proxy (scripts/tapes-up.sh, scripts/vm-demo.sh);
+        # api.anthropic.com ignores it when no proxy is in the path. Session
+        # grouping is conversation-chained on the capture side, so only the
+        # `chat` harness — whose history carries across pieces — lands a whole
+        # run as one session; the stateless harnesses land one per piece.
+        self.client = client or anthropic.Anthropic(
+            default_headers={"X-Tapes-Agent-Name": "tetris-agent"}
+        )
 
     def _call(self, messages: list[dict]) -> dict | None:
         output_config: dict = {"format": {"type": "json_schema", "schema": PLACEMENT_SCHEMA}}

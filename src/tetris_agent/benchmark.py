@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tetris_agent.fitness import race_score
-from tetris_agent.pricing import is_pi, spec
+from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_pi, spec
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,7 @@ def run_arm(
     exemplar_block: str = "",
     level: int = 0,
     streamer=None,
+    measure_power: bool = False,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
@@ -170,6 +171,14 @@ def run_arm(
     from tetris_agent.publisher import NoopPublisher
 
     policy = build_policy(arm, genome_params, exemplar_block)
+    # Only local arms have an energy cost worth measuring — a cloud arm's draw is
+    # someone else's datacenter, and its bill already shows up in cost_usd. A
+    # fresh meter per run, so samples never carry across arms.
+    meter = None
+    if measure_power and arm.model and is_pi(arm.model):
+        from tetris_agent.power import EnergyMeter
+
+        meter = EnergyMeter()
     # Live arms need the wall-clock pacer. Paused arms run uncapped — unless a
     # viewer is watching, in which case real time is the point.
     paced = arm.live or streamer is not None
@@ -189,17 +198,28 @@ def run_arm(
             frame_sinks=frame_sinks,
             decision_deadline_s=arm.deadline_s,
             session_meta=_arm_meta(arm, seed, max_pieces),
+            meter=meter,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
         fitness = agent.run(timer_div=seed, level=level) if arm.live else agent.run(timer_div=seed)
     except Exception as exc:  # one bad arm must not kill the matrix
         logger.exception("arm %s seed %s failed", arm.name, seed)
-        stats = {**policy.stats(), **getattr(agent, "live_stats", {}), **getattr(agent, "paused_stats", {})}
+        stats = {
+            **policy.stats(),
+            **getattr(agent, "live_stats", {}),
+            **getattr(agent, "paused_stats", {}),
+            **(meter.stats() if meter else {}),
+        }
         return ArmResult(arm=arm.name, seed=seed, policy_stats=stats, error=repr(exc))
     finally:
         emu.stop()
-    stats = {**policy.stats(), **getattr(agent, "live_stats", {}), **getattr(agent, "paused_stats", {})}
+    stats = {
+        **policy.stats(),
+        **getattr(agent, "live_stats", {}),
+        **getattr(agent, "paused_stats", {}),
+        **(meter.stats() if meter else {}),
+    }
     return ArmResult(arm=arm.name, seed=seed, fitness=fitness, policy_stats=stats)
 
 
@@ -285,9 +305,25 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                     sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1
                 ),
                 "cost_usd": round(sum(r.cost for r in runs), 4),
+                **_energy_cells(runs),
             }
         )
     return sorted(rows, key=lambda r: r["race_score"], reverse=True)
+
+
+def _energy_cells(runs: list[ArmResult]) -> dict:
+    """Energy columns for one arm's rows, summed across seeds like cost_usd.
+
+    An arm with nothing measured renders "n/a" rather than 0.0 — a cloud arm
+    genuinely draws no local power, and an unmeasured local arm is unknown, but
+    neither is "this run was free", which is the claim the zero used to make.
+    """
+    measured = [r.policy_stats.get("energy_wh") for r in runs]
+    measured = [w for w in measured if w is not None]
+    if not measured:
+        return {"energy_wh": "n/a", "energy_usd": "n/a"}
+    wh = sum(measured)
+    return {"energy_wh": round(wh, 3), "energy_usd": round(energy_usd(wh), 4)}
 
 
 def render_table(rows: list[dict]) -> str:
@@ -296,7 +332,7 @@ def render_table(rows: list[dict]) -> str:
     cols = [
         "arm", "race_score", "score", "lines", "pieces", "avg_holes",
         "illegal", "late", "timeouts", "pct_le_10s", "pct_le_15s",
-        "latency_ms", "tok_s", "cost_usd",
+        "latency_ms", "tok_s", "cost_usd", "energy_wh", "energy_usd",
     ]
     widths = {c: max(len(c), max(len(str(r[c])) for r in rows)) for c in cols}
     header = "  ".join(c.ljust(widths[c]) for c in cols)
@@ -334,6 +370,11 @@ def main(argv=None) -> int:
     parser.add_argument("--max-pieces", type=int, default=DEFAULT_MAX_PIECES)
     parser.add_argument("--rom", default="rom/tetris.gb")
     parser.add_argument("--max-usd", type=float, default=5.0, help="abort the matrix once spend reaches this")
+    parser.add_argument(
+        "--no-power",
+        action="store_true",
+        help="skip host power sampling for local arms (their energy cost then reports n/a)",
+    )
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
     parser.add_argument(
         "--paused",
@@ -441,6 +482,7 @@ def main(argv=None) -> int:
         return run_arm(
             arm, seed, rom_path, max_pieces,
             exemplar_block=exemplar_block, level=args.level, streamer=streamer,
+            measure_power=not args.no_power,
         )
 
     results = run_matrix(
@@ -451,5 +493,16 @@ def main(argv=None) -> int:
     print("\n" + render_table(rows))
     path = write_results(results, rows)
     print(f"\ntotal spend: ${sum(r.cost for r in results):.4f}")
+    drawn = [r.policy_stats.get("energy_wh") for r in results]
+    drawn = [w for w in drawn if w is not None]
+    if drawn:
+        print(
+            f"local energy: {sum(drawn):.2f} Wh marginal over idle "
+            f"= ${energy_usd(sum(drawn)):.4f} at ${DEFAULT_KWH_PRICE}/kWh"
+        )
+    elif not args.no_power:
+        from tetris_agent.power import detect_source
+
+        print(f"local energy: n/a ({detect_source()[1]})")
     print(f"results: {path}")
     return 0

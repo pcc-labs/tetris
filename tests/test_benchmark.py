@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from tetris_agent.benchmark import (
     Arm,
     ArmResult,
@@ -120,6 +122,31 @@ def test_summarize_counts_errored_runs_without_dividing_by_zero():
     rows = summarize([ArmResult("broken", 0, {}, {}, error="boom")])
     assert rows[0]["errors"] == 1
     assert rows[0]["score"] == 0.0
+
+
+def test_unmeasured_energy_renders_na_not_zero():
+    """A local arm that was never sampled is unknown, not free — the old $0.0000."""
+    rows = summarize([ArmResult("a", 0, fitness(), {"cost_usd": 0.0})])
+    assert rows[0]["energy_wh"] == "n/a"
+    assert rows[0]["energy_usd"] == "n/a"
+
+
+def test_measured_energy_sums_across_seeds_and_prices():
+    from tetris_agent.pricing import energy_usd
+
+    runs = [
+        ArmResult("a", 0, fitness(), {"energy_wh": 4.0}),
+        ArmResult("a", 1, fitness(), {"energy_wh": 6.0}),
+    ]
+    rows = summarize(runs)
+    assert rows[0]["energy_wh"] == 10.0  # summed like cost_usd, not averaged
+    assert rows[0]["energy_usd"] == pytest.approx(energy_usd(10.0))
+
+
+def test_energy_columns_appear_in_the_table():
+    rows = summarize([ArmResult("a", 0, fitness(), {"energy_wh": 2.5})])
+    table = render_table(rows)
+    assert "energy_wh" in table and "energy_usd" in table
 
 
 def test_render_table_lists_every_arm():
