@@ -77,6 +77,7 @@ function applyEvent(e) {
       break;
     case "session":
       tick({ turn: 0, text: `session ${d.phase}${d.policy ? ` — ${d.policy}` : ""}` });
+      if (d.phase === "start") setArm(d.policy);
       if (d.fitness?.policy?.cost_usd) {
         tick({ turn: 0, text: `cost $${d.fitness.policy.cost_usd.toFixed(4)}` }, "warn");
       }
@@ -90,6 +91,16 @@ function applyEvent(e) {
       break;
   }
   renderHud();
+}
+
+// The bezel caption is the only always-visible spot that names the player, and
+// it used to hard-code "SELF-HEALING AGENT" — wrong for every model arm, and
+// wrong for human play. The arm arrives on session start and stays pinned; the
+// event-bus line scrolls away after a few pieces.
+const IDLE_CAPTION = "DOT MATRIX · SELF-HEALING AGENT";
+
+function setArm(policy) {
+  $("bezel-caption").textContent = policy ? `DOT MATRIX · ${policy.toUpperCase()}` : IDLE_CAPTION;
 }
 
 function resetHud() {
@@ -143,6 +154,7 @@ function connectLive() {
     $("feed-state").textContent = "IDLE";
     $("feed-state").classList.remove("live");
     state.ws = null;
+    setArm(null);
     setPlayMode(false);
     if (state.mode === "live") setTimeout(connectLive, 1500);
   };
