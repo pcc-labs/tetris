@@ -61,7 +61,7 @@ class LiveTetrisAgent(TetrisAgent):
         self.thread_factory = thread_factory
         self.live_stats = {"late": 0, "worker_errors": 0, "in_flight_at_end": False}
 
-    def run(self, timer_div: int | None = None, level: int | None = 0) -> dict:
+    def _play(self, timer_div: int | None = None, level: int | None = 0) -> dict:
         self._level = level
         self.emu.start(timer_div=timer_div)
         if level is not None:
@@ -136,7 +136,7 @@ class LiveTetrisAgent(TetrisAgent):
         if pending is not None:
             self.live_stats["in_flight_at_end"] = True
         fitness = tracker.compute(score=self.emu.score, lines=self.emu.lines, level=self.emu.level)
-        fitness["policy"] = {**self.policy.stats(), **self.live_stats}
+        fitness["policy"] = {**self.policy.stats(), **self.live_stats, **self._energy_stats()}
         self.collector.game_over(fitness)
         self.collector.session("end", {"fitness": fitness})
         if self.recorder is not None:

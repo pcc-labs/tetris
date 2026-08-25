@@ -133,6 +133,10 @@ Results land in `data/benchmarks/` and print as a ranked table. Model arms also
 report `illegal` — placements the model proposed that don't fit — which is a
 useful capability signal on its own, separate from score.
 
+`data/` is gitignored, so those JSON files stay on the machine that made them.
+Results worth keeping go in [`benchmarks/`](benchmarks/) as a dated markdown
+writeup — append-only, one file per run day, every row traceable to a run id.
+
 Model arms play **live** by default: the game does not pause while the model
 thinks. The decision runs on a worker thread while gravity keeps pulling the
 piece down in real time (level 0 ≈ 15s from spawn to floor), so latency is part
@@ -197,14 +201,43 @@ uv run tetris-bench --models claude-haiku-4-5 pi/gpt-oss:20b \
 Registered ids: `pi/gpt-oss:20b`, `pi/glm-4.7-flash`, `pi/qwen3.6:27b`,
 `pi/nemotron-3.5-lightning-32k` (thinking-capable — effort maps onto pi's `--thinking` level verbatim) and
 `pi/qwen3:8b`, `pi/gemma3` (effort-free, they collapse like Haiku). Any other
-`pi/<model>` id is accepted as a free, effort-free arm, so anything in
-`ollama list` works. pi arms cost $0 but not zero time — a 20B-class decision
-can take tens of seconds, so keep `--max-pieces` modest in pi-heavy matrices.
+`pi/<model>` id is accepted as an unbilled, effort-free arm, so anything in
+`ollama list` works. pi arms bill $0 to an API but are not free — they draw
+watts here instead, which the `energy_wh` / `energy_usd` columns price (see
+below) — and they cost time: a 20B-class decision can take tens of seconds, so
+keep `--max-pieces` modest in pi-heavy matrices.
+
+### What a local arm actually costs
+
+`cost_usd` is an API bill, so a local arm reports `$0.0000` there and that used
+to be the whole story — which read as "free" when it actually means "billed
+somewhere else". Local runs now sample host power and report it:
+
+```
+uv run python -m tetris_agent.power check      # which backend this host offers
+tetris-bench --models pi/gemma3 ...            # energy_wh / energy_usd columns
+```
+
+The figure is **marginal over idle**: a short baseline is sampled before the run
+and subtracted, so it answers "what did this run cost on top of leaving the
+machine on" rather than counting the browser you left open. Watt-hours are
+priced at `DEFAULT_KWH_PRICE` in `pricing.py`, echoed in the summary line so the
+rate is never invisible.
+
+Backends, in the order they are tried: macOS `powermetrics` (needs root — grant
+passwordless sudo for `/usr/bin/powermetrics`, or the column reads `n/a` with the
+reason), Linux `nvidia-smi` + amdgpu hwmon + Intel RAPL for the exe.dev-style VMs
+below. With neither, energy is `n/a` rather than `0.0` — an unmeasured run is
+unknown, not free. `--no-power` opts out.
+
+In `scripts/vm-demo.sh` the sampler runs on the **host**, not in the guest: the
+agent plays inside the VM but inference happens on the host's Ollama, so that is
+where the watts are.
 
 ### What these arms need to run
 
-Open-weight arms are free in dollars and expensive in everything else. Budget
-for all three before starting a matrix:
+Open-weight arms shift cost from a bill to a machine. Budget for all three
+before starting a matrix:
 
 | | measured |
 |---|---|

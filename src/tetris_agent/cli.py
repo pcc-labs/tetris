@@ -7,7 +7,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-from tetris_agent.pricing import EFFORTS
+from tetris_agent.pricing import EFFORTS, is_pi
 from tetris_agent.prompts import HARNESSES
 
 DEFAULT_FITNESS_PATH = "data/last_fitness.json"
@@ -34,6 +34,7 @@ class Config:
     harness: str
     effort: str
     exemplars: str | None
+    no_power: bool
 
 
 def build_config(argv=None) -> Config:
@@ -73,6 +74,11 @@ def build_config(argv=None) -> Config:
         default=None,
         metavar="RUNS_DIR",
         help="inject verified human traces from RUNS_DIR (default runs/) into the model's system prompt",
+    )
+    parser.add_argument(
+        "--no-power",
+        action="store_true",
+        help="skip host power sampling for local arms (their energy cost then reports n/a)",
     )
     return Config(**vars(parser.parse_args(argv)))
 
@@ -136,11 +142,19 @@ def agent_main(argv=None) -> int:
         publisher = _Tee(publisher, LiveEventSink(streamer))
         frame_sinks.append(streamer.send_frame)
 
+    # Local arms bill no API, so their cost is watts. Cloud arms draw their power
+    # in someone else's datacenter and already report it as cost_usd.
+    meter = None
+    if not cfg.no_power and cfg.policy == "model" and is_pi(cfg.model):
+        from tetris_agent.power import EnergyMeter
+
+        meter = EnergyMeter()
+
     emu = Emulator(cfg.rom, headless=cfg.window == "null", speed=1 if cfg.live else 0)
     try:
         agent = _agent_class(cfg.live)(
             emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces,
-            frame_sinks=frame_sinks, policy=build_policy(cfg),
+            frame_sinks=frame_sinks, policy=build_policy(cfg), meter=meter,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())

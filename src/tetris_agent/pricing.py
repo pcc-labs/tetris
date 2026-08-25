@@ -5,6 +5,12 @@ from dataclasses import dataclass
 CACHE_READ_MULTIPLIER = 0.1
 CACHE_WRITE_MULTIPLIER = 1.25  # 5-minute TTL
 
+# What a local arm's watt-hours are worth. `../pokemon-kafka` drifted between
+# three values for this (launcher 0.39, writeups 0.30, bench_report default 0.0,
+# which silently zeroed the column) — one constant here, non-zero, and always
+# echoed alongside the figure so the rate is never invisible.
+DEFAULT_KWH_PRICE = 0.39
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -57,6 +63,18 @@ def spec(model_id: str) -> ModelSpec:
         # --thinking to a model we don't know accepts it.
         return ModelSpec(model_id, 0.0, 0.0, False, 0)
     raise KeyError(f"unknown model {model_id!r}; known: {sorted(MODELS)}")
+
+
+def energy_usd(wh: float, kwh_price: float = DEFAULT_KWH_PRICE) -> float:
+    """Dollar cost of watt-hours drawn.
+
+    Deliberately separate from `cost_usd` rather than folded into it: `cost_usd`
+    is token-only by signature and is called from `benchmark.estimate_cost`
+    before any run exists, where there is no measured draw to fold in. Keeping
+    them apart also keeps `--max-usd` an API-spend cap, so a local arm never
+    consumes a dollar budget it is not billing.
+    """
+    return round(wh / 1000 * kwh_price, 6)
 
 
 def cost_usd(

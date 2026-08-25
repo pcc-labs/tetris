@@ -46,6 +46,7 @@ class TetrisAgent:
         decision_deadline_s: float | None = None,
         session_meta: dict | None = None,
         clock=time.monotonic,
+        meter=None,
     ):
         self.emu = emu
         self.genome = genome
@@ -53,6 +54,10 @@ class TetrisAgent:
         self.collector = collector
         self.recorder = recorder
         self.max_pieces = max_pieces
+        # None means energy is not measured for this run. Left off by default so
+        # constructing an agent never probes the host for power sensors; the CLI
+        # and the benchmark switch it on for local arms, where the figure matters.
+        self.meter = meter
         self.frame_sinks = list(frame_sinks or [])
         # Bounded pause: the game still freezes while the policy thinks (once
         # per piece — plan() is called exactly once), but a decision slower
@@ -73,7 +78,24 @@ class TetrisAgent:
         for sink in self.frame_sinks:
             sink(self.collector.turn, png)
 
-    def run(self, timer_div: int | None = None) -> dict:
+    def run(self, *args, **kwargs) -> dict:
+        """Play a run, sampling host power around it when a meter is attached.
+
+        The meter is entered here rather than inside the loop so it is always
+        stopped, including when the loop raises — `benchmark.run_arm` catches
+        broadly, and a leaked sampler thread would keep spawning powermetrics
+        subprocesses for the life of the process.
+        """
+        if self.meter is None:
+            return self._play(*args, **kwargs)
+        with self.meter:
+            return self._play(*args, **kwargs)
+
+    def _energy_stats(self) -> dict:
+        """Energy keys for fitness, read while the meter is still sampling."""
+        return self.meter.stats() if self.meter is not None else {}
+
+    def _play(self, timer_div: int | None = None) -> dict:
         self.emu.start(timer_div=timer_div)
         self.collector.session(
             "start",
@@ -147,7 +169,7 @@ class TetrisAgent:
                 break
 
         fitness = tracker.compute(score=self.emu.score, lines=self.emu.lines, level=self.emu.level)
-        fitness["policy"] = {**self.policy.stats(), **self.paused_stats}
+        fitness["policy"] = {**self.policy.stats(), **self.paused_stats, **self._energy_stats()}
         self.collector.game_over(fitness)
         self.collector.session("end", {"fitness": fitness})
         if self.recorder is not None:

@@ -14,11 +14,14 @@
 # Afterwards the captured session is a tapes session like any other — query
 # it, or feed it to a cassette (e.g. POST /v1/cassettes/skills/generate).
 #
-# Usage:  scripts/vm-demo.sh [max_pieces]   (default 15; ~15s/piece at level 0)
+# Usage:  scripts/vm-demo.sh [max_pieces]
+#   Default plays to GAME OVER — a truncated run scores 0 no matter how well the
+#   model played, which makes total score meaningless. 300 is a safety cap, not a
+#   target; gemma3 tops out well before it. Pass a small number for a quick smoke.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PIECES="${1:-15}"
+PIECES="${1:-300}"
 MODEL="${TETRIS_VM_MODEL:-pi/gemma3}"
 OLLAMA_MODEL="${MODEL#pi/}"
 
@@ -90,13 +93,33 @@ echo "provisioned"
 step "4/5 open the viewer"
 echo "watch: http://127.0.0.1:8000  (LIVE tab)"
 
-step "5/5 $MODEL plays $PIECES pieces in the vm"
+step "5/5 $MODEL plays to game over in the vm (cap $PIECES pieces, ~15s each)"
+# The agent runs in the guest but inference runs on the HOST's Ollama, so the
+# watts burn out here — a meter inside the VM would measure the wrong machine.
+# Per-run CSV name on purpose: pokemon-kafka reuses one path per attempt and
+# silently keeps only the last window ("floors of floors").
+POWER_CSV="/tmp/tetris-vm-power-$(date +%Y%m%d-%H%M%S).csv"
+uv run python -m tetris_agent.power sample --out "$POWER_CSV" >/tmp/tetris-power.log 2>&1 &
+POWER_PID=$!
+sleep 4   # let the idle baseline land before the agent starts drawing
 limactl shell tetris -- bash -c "
   export PATH=\$HOME/.local/bin:\$PATH \
     TETRIS_OLLAMA_URL=http://host.lima.internal:11434
   cd ~/tetris && uv run tetris-agent --live --policy model --model $MODEL \
     --harness chat --effort low --max-pieces $PIECES --timer-div 0 --no-self-heal \
     --viewer-url ws://host.lima.internal:8000"
+# No --no-power in the guest on purpose: step 3 only re-syncs the repo on first
+# provision, so an existing VM runs an older checkout that would reject the flag.
+# The guest has no power sensors to read either way — the host sampler above is
+# the authoritative measurement.
+# Kill by PID, then by the exact --out path, so a concurrent demo is not collateral.
+kill "$POWER_PID" 2>/dev/null || true
+pkill -f "tetris_agent.power sample --out $POWER_CSV" 2>/dev/null || true
+if [ -s "$POWER_CSV" ]; then
+  uv run python -m tetris_agent.power report "$POWER_CSV" || true
+else
+  echo "energy: n/a ($(uv run python -m tetris_agent.power check 2>&1 | sed 's/^\[power\] //'))"
+fi
 # --harness chat on purpose: its history carries across pieces, so the whole
 # run captures as ONE tapes session (stateless harnesses land one per piece).
 # TETRIS_OLLAMA_URL points preflight at the host's real Ollama for the
