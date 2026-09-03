@@ -66,11 +66,42 @@ def test_render_lists_every_kind_in_priority_order_with_totals():
     assert "| total | 4 | 1 | 5 | 100.0% |" in table
 
 
+def test_histogram_prefers_captured_boards_over_reconstruction(tmp_path):
+    # Events that would fail reconstruction at turn 2 (bogus checksum), but a boards.jsonl
+    # carrying all three decisions: every captured board is counted, nothing is truncated.
+    corrupted = dict(THEN_O_AT_2, holes=3)
+    run = write_run(
+        tmp_path,
+        "20260903-000001-aaaaaa",
+        "heuristic",
+        [("O", "O", 0, 0, 0, O_AT_0), ("O", "I", 0, 2, 0, corrupted), ("O", "T", 0, 4, 0, THEN_O_AT_2)],
+    )
+    empty = ["." * 10] * 18
+    tall = ["." * 10] * 6 + ["#########."] * 12
+    rows = [
+        {"policy": "heuristic", "turn": 1, "piece": "O", "next_piece": "O", "board": empty},
+        {"policy": "heuristic", "turn": 2, "piece": "O", "next_piece": "I", "board": empty},
+        {"policy": "heuristic", "turn": 3, "piece": "T", "next_piece": "O", "board": tall},
+    ]
+    (run / "boards.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    counts = histogram(tmp_path)
+    assert counts["heuristic"] == Counter({"FLAT": 2, "TOPPING_OUT": 1})
+    assert counts["random"] == Counter()
+
+
+def test_histogram_falls_back_to_reconstruction_without_captured_boards(tmp_path):
+    write_run(tmp_path, "20260903-000002-bbbbbb", "random", [("O", "O", 0, 0, 0, O_AT_0)])
+    assert histogram(tmp_path)["random"] == Counter({"FLAT": 1})
+
+
 @pytest.mark.rom
 def test_generate_records_replayable_runs(tmp_path, rom_path):
     from tetris_agent.situation_corpus import generate
 
     runs = generate(rom_path, tmp_path, policies=("heuristic",), seeds=(0,), max_pieces=5)
     assert len(runs) == 1 and (runs[0] / "events.jsonl").is_file()
+    captured = [json.loads(line) for line in (runs[0] / "boards.jsonl").read_text().splitlines() if line.strip()]
+    assert len(captured) == 5  # one board per decision, none lost to reconstruction
+    assert captured[0]["policy"] == "heuristic" and len(captured[0]["board"]) == 18
     counts = histogram(tmp_path)
-    assert sum(counts["heuristic"].values()) >= 1
+    assert sum(counts["heuristic"].values()) == 5
