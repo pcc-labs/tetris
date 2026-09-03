@@ -203,10 +203,10 @@ placed all 30 pieces, over ~9 s every arm topped out.
 | same models at `low` / `medium` (except kimi-k3, gpt-oss) | 50–80 | 0 | 460–2,140 | 13–72 | — | — | ≤ $0.03 |
 
 The full 40-arm table with every model's curve is in
-`benchmarks/2026-09-03-live-reasoning-matrix.md`. The whole matrix cost $0.98
-in credits; kimi-k3 was over half of it and did not buy the top score.
-gpt-oss:20b at `low` — 530, 3 s per decision — is the same 21B that runs on
-the iGPU, which makes it the local row to chase.
+[`benchmarks/2026-09-03-live-reasoning-matrix.md`](benchmarks/2026-09-03-live-reasoning-matrix.md).
+The whole matrix cost $0.98 in credits; kimi-k3 was over half of it and did
+not buy the top score. gpt-oss:20b at `low` — 530, 3 s per decision — is the
+same 21B that runs on the iGPU, which makes it the local row to chase.
 
 ### The local roster on the same matrix (2026-09-03)
 
@@ -228,11 +228,11 @@ play only at `off`, gpt-oss:20b only at `low`.
 | any model at `low`/`medium` (gpt-oss at default/`medium`); gemma4-31b at `off` | 55 | 0 | ~13 | 0–1,500 | 18–72 | — | 74–88 | 1.1–1.7 |
 
 Full table with peak watts and idle baselines in
-`benchmarks/2026-09-03-local-reasoning-matrix.md`. (*The 26b `off` baseline
-read high, so its marginal Wh is an artefact; its mean draw is the figure.)
-gpt-oss:20b at `low` is 225 locally against 530 for its cloud twin at the
-same latency — the first question a per-placement quality measure needs to
-answer.
+[`benchmarks/2026-09-03-local-reasoning-matrix.md`](benchmarks/2026-09-03-local-reasoning-matrix.md).
+(*The 26b `off` baseline read high, so its marginal Wh is an artefact; its
+mean draw is the figure.) gpt-oss:20b at `low` is 225 locally against 530 for
+its cloud twin at the same latency — the first question a per-placement
+quality measure needs to answer.
 
 ### Harness × model, bounded pause (2026-09-03, superseded screen)
 
@@ -258,14 +258,14 @@ larger model.
 The same arm can move ~100 race between sessions on identical settings, so
 treat ±100 at one seed as noise. Write-ups, one dated file per run day:
 
-- `benchmarks/2026-09-03-local-reasoning-matrix.md` — the local roster × {off, low, medium} on live gravity, with power; gemma4:26b `off` 530
-- `benchmarks/2026-09-03-live-reasoning-matrix.md` — thirteen cloud models × {off, low, medium} on live gravity, with rates and tok/s
-- `benchmarks/2026-09-03-cloud-thinking.md` — the effort curve on gpt-oss:120b and the roster with thinking off, bounded pause
-- `benchmarks/2026-09-03-cloud-roster.md` — every cloud tag at Ollama's default thinking, bounded pause
-- `benchmarks/2026-09-03-situation-router.md` — `routed` vs `legal` vs `features` per model
-- `benchmarks/2026-09-03-local-roster-routed.md` — the local roster under `routed`
-- `benchmarks/2026-09-03-situation-histogram.md` — class split of the situation classifier
-- `benchmarks/2026-08-22-p15-deadline-screen.md` — every local model under a 15 s deadline
+- [`benchmarks/2026-09-03-local-reasoning-matrix.md`](benchmarks/2026-09-03-local-reasoning-matrix.md) — the local roster × {off, low, medium} on live gravity, with power; gemma4:26b `off` 530
+- [`benchmarks/2026-09-03-live-reasoning-matrix.md`](benchmarks/2026-09-03-live-reasoning-matrix.md) — thirteen cloud models × {off, low, medium} on live gravity, with rates and tok/s
+- [`benchmarks/2026-09-03-cloud-thinking.md`](benchmarks/2026-09-03-cloud-thinking.md) — the effort curve on gpt-oss:120b and the roster with thinking off, bounded pause
+- [`benchmarks/2026-09-03-cloud-roster.md`](benchmarks/2026-09-03-cloud-roster.md) — every cloud tag at Ollama's default thinking, bounded pause
+- [`benchmarks/2026-09-03-situation-router.md`](benchmarks/2026-09-03-situation-router.md) — `routed` vs `legal` vs `features` per model
+- [`benchmarks/2026-09-03-local-roster-routed.md`](benchmarks/2026-09-03-local-roster-routed.md) — the local roster under `routed`
+- [`benchmarks/2026-09-03-situation-histogram.md`](benchmarks/2026-09-03-situation-histogram.md) — class split of the situation classifier
+- [`benchmarks/2026-08-22-p15-deadline-screen.md`](benchmarks/2026-08-22-p15-deadline-screen.md) — every local model under a 15 s deadline
 
 The `heuristic` arm (the one-piece search in `policy.py`) runs as a control,
 but it is an exhaustive solver, not a player. Read model arms against human
@@ -277,7 +277,8 @@ play and each other, not against it.
 VM, frames stream to the viewer on the host, and every inference call exits the
 VM through a tapes capture proxy to the host's Ollama. Default arm is
 `pi/gemma3`. Needs Docker, `tapes`, `limactl`, and Ollama; the script header
-has the topology. Profile: `benchmarks/2026-08-25-vm-demo-gemma3.md`.
+has the topology. Profile:
+[`benchmarks/2026-08-25-vm-demo-gemma3.md`](benchmarks/2026-08-25-vm-demo-gemma3.md).
 
 ## Session capture (tapes)
 
