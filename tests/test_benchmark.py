@@ -496,7 +496,11 @@ def test_build_policy_dispatches_the_lookahead_arm():
 
 
 def test_lookahead_arm_costs_nothing_in_the_estimate():
+    """estimate_cost skips every non-model arm, so 0.0 on its own proves
+    nothing — this must also confirm the lookahead arm was actually present
+    to be skipped, or the assertion would hold vacuously for an empty list."""
     arms = expand_arms([], [], [], lookahead_control=True)
+    assert "lookahead" in [a.name for a in arms]
     assert estimate_cost(arms, [0], max_pieces=50) == 0.0
 
 
@@ -559,3 +563,85 @@ def test_grading_is_on_by_default(monkeypatch):
 
 def test_no_quality_is_an_accepted_flag():
     assert main(["--models", "claude-opus-5", "--estimate", "--max-pieces", "5", "--no-quality"]) == 0
+
+
+def test_no_quality_produces_no_grading_and_no_trace_directory(monkeypatch, tmp_path):
+    """`--estimate` short-circuits before any arm runs, so it cannot prove
+    --no-quality actually disables grading. Drive run_arm directly, the way
+    the paused-agent tests fake the emulator internals (Controller,
+    read_state) around a real TetrisAgent, and assert both halves of the
+    isolation guarantee: no placement_graded event reaches a viewer, and no
+    run directory appears under RUNS_DIR."""
+    import numpy as np
+
+    import tetris_agent.benchmark as benchmark_mod
+    from tetris_agent.benchmark import Arm, run_arm
+    from tetris_agent.controller import ExecResult
+
+    monkeypatch.setattr(benchmark_mod, "RUNS_DIR", tmp_path)
+
+    class FakeEmu:
+        score = 100
+        lines = 1
+        level = 0
+
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            pass
+
+        def start(self, timer_div=None):
+            pass
+
+        def tick(self, n):
+            pass
+
+        def stop(self):
+            pass
+
+        def screenshot(self):
+            return b""
+
+    class FakeFalling:
+        name = "O"
+
+    class FakeState:
+        def __init__(self, falling):
+            self.falling = falling
+            self.board = np.zeros((18, 10), dtype=bool)
+            self.next_piece = "I"
+            self.game_over = False
+
+    states = [FakeState(FakeFalling()), FakeState(None)]
+
+    def fake_read_state(emu):
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    class FakeController:
+        def __init__(self, emu, ticks_per_press=4):
+            pass
+
+        def execute(self, target):
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+        def run_out(self):
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+    class CapturingStreamer:
+        def __init__(self):
+            self.events = []
+
+        def send_event(self, event):
+            self.events.append(event)
+
+        def send_frame(self, turn, png):
+            pass
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.agent.Controller", FakeController)
+    monkeypatch.setattr("tetris_agent.agent.read_state", fake_read_state)
+
+    streamer = CapturingStreamer()
+    result = run_arm(Arm("heuristic"), seed=0, rom_path="rom.gb", max_pieces=1, streamer=streamer, grade_quality=False)
+
+    assert result.error == ""  # the fake run really completed
+    assert "placement_graded" not in [e.get("event_type") for e in streamer.events]
+    assert list(tmp_path.iterdir()) == [], "no trace directory should exist under RUNS_DIR"
