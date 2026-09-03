@@ -268,6 +268,29 @@ def test_illegal_retry_is_skipped_when_the_deadline_is_tight():
     assert p.stats()["retry_count"] == 0
 
 
+def test_fixed_effort_true_pins_the_effort_ladder():
+    # When fixed_effort=True, the effort ladder contains only the configured tier,
+    # so the deadline controller cannot step down to a cheaper tier.
+    p = policy([ok()], effort="high", fixed_effort=True)
+    ladder = p._effort_ladder()
+    assert ladder == ["high"], f"Expected ['high'], got {ladder}"
+
+
+def test_fixed_effort_false_returns_full_ladder():
+    # When fixed_effort=False (default), the ladder contains all tiers up to and
+    # including the configured tier, allowing the deadline controller to step down.
+    p = policy([ok()], effort="high", fixed_effort=False)
+    ladder = p._effort_ladder()
+    assert ladder == ["low", "medium", "high"], f"Expected ['low', 'medium', 'high'], got {ladder}"
+
+
+def test_fixed_effort_default_is_false():
+    # When fixed_effort is omitted, it defaults to False and the full ladder is returned.
+    p = policy([ok()], effort="high")
+    ladder = p._effort_ladder()
+    assert ladder == ["low", "medium", "high"], f"Expected ['low', 'medium', 'high'], got {ladder}"
+
+
 def test_routed_harness_swaps_the_system_prompt_and_names_the_situation():
     from tetris_agent.prompts import ROUTED_SYSTEM_PROMPT
 
