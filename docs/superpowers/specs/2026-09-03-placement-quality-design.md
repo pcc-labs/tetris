@@ -50,8 +50,28 @@ with weights from the same `Genome` the heuristic arm plays with.
 
 **Two-ply search.** For each legal placement of the current piece, place it to get
 `(b1, l1)`, then take the maximum over every legal placement of the *known next piece* on
-`b1` of `value(b2, l1 + l2)`. When the next piece has no legal placement, fall back to
-`value(b1, l1)`, so a forced top-out does not score as unboundedly bad.
+`b1` of `value(b2, l1 + l2)`.
+
+**When the next piece has no legal placement, the game is over.** That placement must
+therefore rank BELOW every placement that survives, using a finite constant chosen to sit
+under any reachable board value.
+
+> **Corrected 2026-09-03, after the whole-branch review.** This rule originally said to fall
+> back to the one-ply `value(b1, l1)` "so a forced top-out does not score as unboundedly
+> bad". That was wrong, and dangerously so. One-ply and two-ply values are on different
+> scales: a searched two-ply value already carries the next piece's height and hole penalty,
+> so it is systematically lower. A one-ply fallback therefore scores the lethal move *above*
+> every survivable one. Measured over 19,816 random high-stack boards, 1,205 had both dead
+> and live options and in 537 of them — 45 % — the oracle's top choice was the move that
+> leaves the next piece nowhere to go. The ceiling arm suicides on exactly the boards that
+> end games, and every model that correctly avoids the killer is labelled with positive
+> regret. Since these rankings are the training labels, a systematically inverted label on
+> near-death boards is the worst failure this design can have.
+
+The constant must be finite, not `-inf` or `NaN`, so arithmetic downstream stays well
+behaved. It must also be encoded in the *value*, not only in the sort order: `grade`
+computes regret as `best_value - chosen_value`, so a dead placement carrying a high value
+with a low sort position would produce negative regret.
 
 **Depth is a parameter.** `ply=1` and `ply=2` share one code path. At `ply=1` the oracle
 must reproduce `policy.plan_placement` exactly, including its tie-break of
@@ -169,7 +189,10 @@ The isolation guarantee, stated so it can be tested:
 - No added latency inside a piece's fall.
 - Existing event types keep their exact fields.
 - A `--no-quality` flag disables the whole feature for a run: no grading, no graded
-  events, no new columns, and no trace directory.
+  events, and no trace directory. The `regret` / `top1` / `top3` columns still render, as
+  `n/a` — matching how the energy columns already report an unmeasured run, and keeping the
+  table's shape the same from run to run. (Corrected 2026-09-03: this line originally said
+  "no new columns", which contradicted the repo's own `n/a` convention.)
 
 The one intended addition to how a benchmark runs: with quality on, each arm writes a
 trace directory under `runs/`. Events only, no frames. That is new disk I/O, and it is the
@@ -236,8 +259,10 @@ Test-driven, each watched failing first.
 1. At `ply=1` the oracle reproduces `plan_placement` exactly, tie-breaks included.
 2. On a board built so the greedy move ruins the next piece, two-ply chooses differently
    from one-ply.
-3. A next piece with no legal placement falls back to the one-ply value: no crash, no
-   infinite or `None` value.
+3. A next piece with no legal placement ranks LAST, below every surviving placement, on a
+   board that offers several legal placements of which only one is lethal. Asserting
+   finiteness alone is not enough: the original test had a single legal placement and so
+   had nothing to compare a rank against, which is how the inverted valuation shipped.
 4. Rank and `legal_count` agree with the length of the ranked list.
 
 **Grade**
