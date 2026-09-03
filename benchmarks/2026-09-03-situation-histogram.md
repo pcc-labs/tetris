@@ -20,7 +20,7 @@ the actual run date per the brief's own instruction.
 
 Method note: an earlier run of this task used `traces.mine_run` to reconstruct boards by
 replaying each run's recorded plan, which stops at the first controller replan and so kept only
-103 of ~590 boards played; capturing boards at decision time (commit 2081bf0) replaced that
+103 of 690 boards played; capturing boards at decision time (commit 2081bf0) replaced that
 replay path and now yields one board per piece placed, with none lost.
 
 ## Results
@@ -52,8 +52,10 @@ matching that every random run topped out before the piece cap while every heuri
 not — this confirms its top spot in the priority order correctly isolates the one policy that
 actually collapses, and with the full corpus captured it now shows up across a meaningfully
 larger share of random boards (38/90, 42%) than the truncated first pass suggested. MOUND
-dominates heuristic play at full scale (407/600, 68%) with FLAT a distant second (183/600, 30%)
+dominates heuristic play at full scale (407/600, 68%) with FLAT a distant second (183/600, 30.5%)
 now that every piece is counted, indicating a competent policy spends most of its life in
 gently uneven terrain rather than dead flat or at risk; HOLE_RISK stays rare in both policies
-(10 heuristic, 5 random; 2.2% overall), which continues to suggest the well-depth=4 threshold is
-a tight, well-calibrated gate rather than one that fires on ordinary bumpiness.
+(10 heuristic, 5 random; 2.2% overall). This corpus cannot say whether that rarity is correct —
+it measures the classifier's coverage over free play, not its effect on play, so a routed
+model-play breakdown per situation (Task 7) is what would show whether HOLE_RISK boards are
+genuinely uncommon or whether real hazard boards are slipping past it uncaught.
