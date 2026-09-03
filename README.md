@@ -90,6 +90,17 @@ unlisted tag pi silently drops `--thinking` and the model runs at Ollama's
 default, whatever the arm id says. Every cloud row before 2026-09-03 was
 recorded that way.
 
+**Four cloud tags ignore the flag altogether**, as served by Ollama cloud on
+2026-09-03: `glm-5.3`, `glm-5.3-flash`, `minimax-m3`, and `nemotron-3-ultra`.
+With `reasoning_effort: "none"` on the OpenAI endpoint — and with
+`think: false` on the raw `/api/generate` — glm-5.3 and glm-5.3-flash still
+write their reasoning into the visible response (650–1,000 tokens, 60–160 s
+per decision) and minimax-m3 still fills a hidden thinking block; nemotron-3-ultra
+does not answer a one-word prompt inside two minutes either way. They flatline
+at every level and are excluded from the effort matrices for that reason, not
+for lack of capability. The earlier glm-4.7-flash (local) and glm-5.1 / 5.2
+(cloud) do obey it.
+
 ### Local cost
 
 Ollama cloud tags (`pi/<tag>:cloud`, `pi/<tag>-cloud`) proxy through the local
@@ -192,10 +203,36 @@ placed all 30 pieces, over ~9 s every arm topped out.
 | same models at `low` / `medium` (except kimi-k3, gpt-oss) | 50–80 | 0 | 460–2,140 | 13–72 | — | — | ≤ $0.03 |
 
 The full 40-arm table with every model's curve is in
-`benchmarks/2026-09-03-live-reasoning-matrix.md`. The whole matrix cost $0.98
-in credits; kimi-k3 was over half of it and did not buy the top score.
-gpt-oss:20b at `low` — 530, 3 s per decision — is the same 21B that runs on
-the iGPU, which makes it the local row to chase.
+[`benchmarks/2026-09-03-live-reasoning-matrix.md`](benchmarks/2026-09-03-live-reasoning-matrix.md).
+The whole matrix cost $0.98 in credits; kimi-k3 was over half of it and did
+not buy the top score. gpt-oss:20b at `low` — 530, 3 s per decision — is the
+same 21B that runs on the iGPU, which makes it the local row to chase.
+
+### The local roster on the same matrix (2026-09-03)
+
+Same screen, the models that fit the iGPU, power sampled, one resident at a
+time. **gemma4:26b (26B-A4B, 19 GB) with thinking off scores 530** — nine
+lines, zero holes, 3 s per decision, ~50 W — which is the cloud 530 cluster
+and the original reference. Local parity on this screen, three days after the
+best local row was 220. The curve shape is the cloud's: six of seven models
+play only at `off`, gpt-oss:20b only at `low`.
+
+| arm | race | lines | avg holes | tok/decision | s/decision | tok/s | mean W | Wh |
+|---|---|---|---|---|---|---|---|---|
+| gemma4:26b / off | **530** | 9 | 0.00 | 33 | 3.0 | 10.7 | 51 | ~1.5* |
+| gemma4 e4b / off | 330 | 4 | 10.20 | 34 | 2.2 | 15.8 | 46 | 0.88 |
+| laguna-xs / off | 310 | 4 | 5.77 | 26 | 2.4 | 10.8 | 51 | 1.23 |
+| glm-4.7-flash / off | 230 | 2 | 6.50 | 30 | 2.5 | 12.0 | 53 | 0.88 |
+| gpt-oss:20b / low | 225 | 2 | 0.48 | 107 | 3.6 | 29.6 | 63 | 1.40 |
+| nemotron-3.5-lightning / off | 215 | 2 | 14.89 | 33 | 2.8 | 11.8 | 56 | 0.81 |
+| any model at `low`/`medium` (gpt-oss at default/`medium`); gemma4-31b at `off` | 55 | 0 | ~13 | 0–1,500 | 18–72 | — | 74–88 | 1.1–1.7 |
+
+Full table with peak watts and idle baselines in
+[`benchmarks/2026-09-03-local-reasoning-matrix.md`](benchmarks/2026-09-03-local-reasoning-matrix.md).
+(*The 26b `off` baseline read high, so its marginal Wh is an artefact; its
+mean draw is the figure.) gpt-oss:20b at `low` is 225 locally against 530 for
+its cloud twin at the same latency — the first question a per-placement
+quality measure needs to answer.
 
 ### Harness × model, bounded pause (2026-09-03, superseded screen)
 
@@ -221,13 +258,14 @@ larger model.
 The same arm can move ~100 race between sessions on identical settings, so
 treat ±100 at one seed as noise. Write-ups, one dated file per run day:
 
-- `benchmarks/2026-09-03-live-reasoning-matrix.md` — thirteen cloud models × {off, low, medium} on live gravity, with rates and tok/s
-- `benchmarks/2026-09-03-cloud-thinking.md` — the effort curve on gpt-oss:120b and the roster with thinking off, bounded pause
-- `benchmarks/2026-09-03-cloud-roster.md` — every cloud tag at Ollama's default thinking, bounded pause
-- `benchmarks/2026-09-03-situation-router.md` — `routed` vs `legal` vs `features` per model
-- `benchmarks/2026-09-03-local-roster-routed.md` — the local roster under `routed`
-- `benchmarks/2026-09-03-situation-histogram.md` — class split of the situation classifier
-- `benchmarks/2026-08-22-p15-deadline-screen.md` — every local model under a 15 s deadline
+- [`benchmarks/2026-09-03-local-reasoning-matrix.md`](benchmarks/2026-09-03-local-reasoning-matrix.md) — the local roster × {off, low, medium} on live gravity, with power; gemma4:26b `off` 530
+- [`benchmarks/2026-09-03-live-reasoning-matrix.md`](benchmarks/2026-09-03-live-reasoning-matrix.md) — thirteen cloud models × {off, low, medium} on live gravity, with rates and tok/s
+- [`benchmarks/2026-09-03-cloud-thinking.md`](benchmarks/2026-09-03-cloud-thinking.md) — the effort curve on gpt-oss:120b and the roster with thinking off, bounded pause
+- [`benchmarks/2026-09-03-cloud-roster.md`](benchmarks/2026-09-03-cloud-roster.md) — every cloud tag at Ollama's default thinking, bounded pause
+- [`benchmarks/2026-09-03-situation-router.md`](benchmarks/2026-09-03-situation-router.md) — `routed` vs `legal` vs `features` per model
+- [`benchmarks/2026-09-03-local-roster-routed.md`](benchmarks/2026-09-03-local-roster-routed.md) — the local roster under `routed`
+- [`benchmarks/2026-09-03-situation-histogram.md`](benchmarks/2026-09-03-situation-histogram.md) — class split of the situation classifier
+- [`benchmarks/2026-08-22-p15-deadline-screen.md`](benchmarks/2026-08-22-p15-deadline-screen.md) — every local model under a 15 s deadline
 
 The `heuristic` arm (the one-piece search in `policy.py`) runs as a control,
 but it is an exhaustive solver, not a player. Read model arms against human
@@ -239,7 +277,8 @@ play and each other, not against it.
 VM, frames stream to the viewer on the host, and every inference call exits the
 VM through a tapes capture proxy to the host's Ollama. Default arm is
 `pi/gemma3`. Needs Docker, `tapes`, `limactl`, and Ollama; the script header
-has the topology. Profile: `benchmarks/2026-08-25-vm-demo-gemma3.md`.
+has the topology. Profile:
+[`benchmarks/2026-08-25-vm-demo-gemma3.md`](benchmarks/2026-08-25-vm-demo-gemma3.md).
 
 ## Session capture (tapes)
 
