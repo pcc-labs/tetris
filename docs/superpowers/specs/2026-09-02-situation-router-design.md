@@ -8,7 +8,7 @@ that situation calls for — instead of one general placement prompt for every p
 
 ## 01 — Why route at all
 
-The premise comes from Jonas Neubauer's strategy guidance (Polygon, 2019), which is not one
+The premise comes from Jonas Neubauer's strategy guidance ([Polygon, 2019](https://www.polygon.com/guides/2019/2/22/18225349/tetris-strategy-tips-how-to-jonas-neubauer/)), which is not one
 general placement heuristic but a small set of board states each with a prescribed move.
 That structure is the useful part: it is a routing table, and the left-hand side is
 computable from the board array.

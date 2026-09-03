@@ -35,7 +35,13 @@ The harness is the interesting axis — it is how much of the reasoning is done
   (`situation.py`) — with the one technique it calls for and only the
   consequence numbers that technique turns on. The general play guidance in the
   system prompt is replaced by "follow the named technique"; the thresholds are
-  genome fields. Run `uv run tetris-situations generate` then `uv run tetris-situations histogram`
+  genome fields. The situations and techniques are lifted from seven-time
+  Classic Tetris world champion Jonas Neubauer's advice in Polygon's
+  [Tetris tips from a seven-time world champion](https://www.polygon.com/guides/2019/2/22/18225349/tetris-strategy-tips-how-to-jonas-neubauer/)
+  (play flat, never more than two high or two deep, keep two-wide gaps for O/S/Z,
+  decide fast even when it isn't optimal) — his guidance is a routing table, and
+  this harness computes its left-hand side from the board.
+  Run `uv run tetris-situations generate` then `uv run tetris-situations histogram`
   to see the class split over a free corpus (`benchmarks/2026-09-03-situation-histogram.md`).
 
 ### What the harnesses have measured so far
