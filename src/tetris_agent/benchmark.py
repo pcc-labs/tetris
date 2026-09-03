@@ -15,10 +15,12 @@ from pathlib import Path
 
 from tetris_agent.fitness import race_score
 from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_pi, spec
+from tetris_agent.recorder import RunRecorder
 
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("data/benchmarks")
+RUNS_DIR = Path("runs")
 DEFAULT_SEEDS = (0x00,)
 DEFAULT_MAX_PIECES = 30
 
@@ -83,6 +85,7 @@ def expand_arms(
     live: bool = True,
     deadline_s: float | None = None,
     fixed_effort: bool = False,
+    lookahead_control: bool = False,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -110,11 +113,15 @@ def expand_arms(
         if arm.name not in seen:
             seen.add(arm.name)
             arms.append(arm)
+    # Appended last, never inserted: a command run before this flag existed
+    # must produce the same rows in the same order, plus this one at the end.
+    if lookahead_control:
+        arms.append(Arm(policy="lookahead"))
     return arms
 
 
 def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: str = ""):
-    from tetris_agent.policy import Genome, HeuristicPolicy, NoInputPolicy, RandomPolicy
+    from tetris_agent.policy import Genome, HeuristicPolicy, LookaheadPolicy, NoInputPolicy, RandomPolicy
 
     genome = Genome.from_params(genome_params or {})
     if arm.policy == "heuristic":
@@ -123,6 +130,8 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
         return NoInputPolicy()
     if arm.policy == "random":
         return RandomPolicy()
+    if arm.policy == "lookahead":
+        return LookaheadPolicy(genome)
     block = exemplar_block if arm.exemplars else ""
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
@@ -178,6 +187,7 @@ def run_arm(
     level: int = 0,
     streamer=None,
     measure_power: bool = False,
+    grade_quality: bool = True,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
@@ -196,6 +206,16 @@ def run_arm(
         from tetris_agent.power import EnergyMeter
 
         meter = EnergyMeter()
+    # Placement grading, and the trace it writes. Events only: frames are the
+    # expensive part of a recording and nothing here needs them.
+    grader = recorder = None
+    if grade_quality:
+        import functools
+
+        from tetris_agent.quality import DEFAULT_PLY, grade
+
+        grader = functools.partial(grade, genome=Genome.from_params(genome_params or {}), ply=DEFAULT_PLY)
+        recorder = RunRecorder(RUNS_DIR, label=arm.name)
     # Live arms need the wall-clock pacer. Paused arms run uncapped — unless a
     # viewer is watching, in which case real time is the point.
     paced = arm.live or streamer is not None
@@ -209,13 +229,15 @@ def run_arm(
             emu,
             genome=Genome.from_params(genome_params or {}),
             collector=EventCollector(publisher),
-            recorder=None,
+            recorder=recorder,
             max_pieces=max_pieces,
             policy=policy,
             frame_sinks=frame_sinks,
             decision_deadline_s=arm.deadline_s,
             session_meta=_arm_meta(arm, seed, max_pieces),
             meter=meter,
+            grader=grader,
+            record_frames=False,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
@@ -319,6 +341,7 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                 "tok_s": round(sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1),
                 "cost_usd": round(sum(r.cost for r in runs), 4),
                 **_energy_cells(runs),
+                **_quality_cells(runs),
             }
         )
     return sorted(rows, key=lambda r: r["race_score"], reverse=True)
@@ -339,6 +362,29 @@ def _energy_cells(runs: list[ArmResult]) -> dict:
     return {"energy_wh": round(wh, 3), "energy_usd": round(energy_usd(wh), 4)}
 
 
+def _quality_cells(runs: list[ArmResult]) -> dict:
+    """Placement-quality columns for one arm's rows.
+
+    Weighted by each seed's graded-decision count, so the figure is a mean over
+    decisions rather than a mean of means. `n/a` rather than 0.0 when nothing was
+    graded: quality off and every-decision-late are unknown, not perfect.
+    """
+    scored = [r for r in runs if r.fitness]
+    total = sum(r.fitness.get("graded_decisions") or 0 for r in scored)
+    if not total:
+        return {"regret": "n/a", "top1": "n/a", "top3": "n/a", "graded": 0}
+
+    def weighted(key: str) -> float:
+        return sum((r.fitness.get(key) or 0) * (r.fitness.get("graded_decisions") or 0) for r in scored) / total
+
+    return {
+        "regret": round(weighted("mean_regret"), 4),
+        "top1": round(weighted("top1_rate"), 3),
+        "top3": round(weighted("top3_rate"), 3),
+        "graded": total,
+    }
+
+
 def render_table(rows: list[dict]) -> str:
     if not rows:
         return "(no results)"
@@ -349,6 +395,9 @@ def render_table(rows: list[dict]) -> str:
         "lines",
         "pieces",
         "avg_holes",
+        "regret",
+        "top1",
+        "top3",
         "illegal",
         "late",
         "timeouts",
@@ -403,6 +452,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
     parser.add_argument(
+        "--lookahead-control",
+        action="store_true",
+        help="add the two-ply oracle as a ceiling arm (the arm that placement quality is graded against)",
+    )
+    parser.add_argument(
         "--paused",
         action="store_true",
         help="freeze the emulator during model calls (legacy mode, for A/B against historical rows)",
@@ -443,6 +497,11 @@ def main(argv=None) -> int:
         action="store_true",
         help="pin each arm to its configured effort (no deadline downshifts); arms are labeled +fixed",
     )
+    parser.add_argument(
+        "--no-quality",
+        action="store_true",
+        help="skip placement grading (no regret columns, no run traces)",
+    )
     args = parser.parse_args(argv)
 
     if args.decision_deadline is not None and not args.paused:
@@ -478,6 +537,7 @@ def main(argv=None) -> int:
         live=not args.paused,
         deadline_s=args.decision_deadline,
         fixed_effort=args.fixed_effort,
+        lookahead_control=args.lookahead_control,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
@@ -518,6 +578,7 @@ def main(argv=None) -> int:
             level=args.level,
             streamer=streamer,
             measure_power=not args.no_power,
+            grade_quality=not args.no_quality,
         )
 
     results = run_matrix(

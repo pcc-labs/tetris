@@ -452,3 +452,21 @@ def test_routed_system_prompt_and_situation_reach_pi():
     cmd = seen["cmd"]
     assert cmd[cmd.index("--system-prompt") + 1].startswith(ROUTED_SYSTEM_PROMPT)
     assert "Situation: FLAT" in cmd[-1]
+
+
+def test_last_fallback_marks_a_placement_the_model_did_not_choose():
+    """A fallback is not a decision, so the grader must skip it.
+
+    Drives one policy instance through a failed decision followed by a
+    successful one, so the assertion proves last_fallback RESETS on the next
+    call rather than merely differing between two independently constructed
+    instances (which would prove nothing about resetting at all).
+    """
+    p = policy([completed("", returncode=1), ok_events()])
+
+    p.plan(empty_board(), "O", "I", turn=1)
+    assert p.last_fallback is True
+    assert p.stats()["illegal_count"] == 1
+
+    p.plan(empty_board(), "O", "I", turn=2)
+    assert p.last_fallback is False

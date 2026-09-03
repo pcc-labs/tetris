@@ -479,6 +479,31 @@ def test_render_table_includes_the_deadline_columns():
     assert "timeouts" in table and "pct_le_15s" in table
 
 
+def test_lookahead_arm_is_opt_in_and_absent_by_default():
+    """A command run yesterday must produce the same rows tomorrow."""
+    default = [a.name for a in expand_arms(["claude-opus-5"], ["board"], ["low"])]
+    assert "lookahead" not in default
+
+    opted = [a.name for a in expand_arms(["claude-opus-5"], ["board"], ["low"], lookahead_control=True)]
+    assert "lookahead" in opted
+    assert opted[: len(default)] == default  # appended, nothing reordered
+
+
+def test_build_policy_dispatches_the_lookahead_arm():
+    from tetris_agent.policy import LookaheadPolicy
+
+    assert isinstance(build_policy(Arm("lookahead")), LookaheadPolicy)
+
+
+def test_lookahead_arm_costs_nothing_in_the_estimate():
+    """estimate_cost skips every non-model arm, so 0.0 on its own proves
+    nothing — this must also confirm the lookahead arm was actually present
+    to be skipped, or the assertion would hold vacuously for an empty list."""
+    arms = expand_arms([], [], [], lookahead_control=True)
+    assert "lookahead" in [a.name for a in arms]
+    assert estimate_cost(arms, [0], max_pieces=50) == 0.0
+
+
 def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
     rc = main(
         [
@@ -497,3 +522,126 @@ def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
     assert rc == 0
     assert "+p15" in out
     assert "+live" not in out
+
+
+def test_quality_columns_are_na_when_nothing_was_graded():
+    rows = summarize([ArmResult("a", 0, fitness(), {})])
+    assert rows[0]["regret"] == "n/a"
+    assert rows[0]["top1"] == "n/a"
+    assert rows[0]["graded"] == 0
+
+
+def test_quality_columns_weight_seeds_by_their_graded_decisions():
+    graded_a = {**fitness(), "graded_decisions": 10, "mean_regret": 0.10, "top1_rate": 1.0, "top3_rate": 1.0}
+    graded_b = {**fitness(), "graded_decisions": 30, "mean_regret": 0.50, "top1_rate": 0.0, "top3_rate": 0.0}
+    rows = summarize([ArmResult("a", 0, graded_a, {}), ArmResult("a", 1, graded_b, {})])
+    # (0.10*10 + 0.50*30) / 40 = 0.40 — a decision mean, not a mean of means.
+    assert rows[0]["regret"] == 0.4
+    assert rows[0]["top1"] == 0.25
+    assert rows[0]["graded"] == 40
+
+
+def test_quality_columns_appear_in_the_table():
+    rows = summarize(
+        [
+            ArmResult(
+                "a", 0, {**fitness(), "graded_decisions": 1, "mean_regret": 0.0, "top1_rate": 1.0, "top3_rate": 1.0}, {}
+            )
+        ]
+    )
+    table = render_table(rows)
+    assert "regret" in table and "top1" in table and "top3" in table
+
+
+def test_grading_is_on_by_default(monkeypatch):
+    import inspect
+
+    from tetris_agent.benchmark import run_arm
+
+    assert inspect.signature(run_arm).parameters["grade_quality"].default is True
+
+
+def test_no_quality_is_an_accepted_flag():
+    assert main(["--models", "claude-opus-5", "--estimate", "--max-pieces", "5", "--no-quality"]) == 0
+
+
+def test_no_quality_produces_no_grading_and_no_trace_directory(monkeypatch, tmp_path):
+    """`--estimate` short-circuits before any arm runs, so it cannot prove
+    --no-quality actually disables grading. Drive run_arm directly, the way
+    the paused-agent tests fake the emulator internals (Controller,
+    read_state) around a real TetrisAgent, and assert both halves of the
+    isolation guarantee: no placement_graded event reaches a viewer, and no
+    run directory appears under RUNS_DIR."""
+    import numpy as np
+
+    import tetris_agent.benchmark as benchmark_mod
+    from tetris_agent.benchmark import Arm, run_arm
+    from tetris_agent.controller import ExecResult
+
+    monkeypatch.setattr(benchmark_mod, "RUNS_DIR", tmp_path)
+
+    class FakeEmu:
+        score = 100
+        lines = 1
+        level = 0
+
+        def __init__(self, rom, headless=True, speed=0, **kw):
+            pass
+
+        def start(self, timer_div=None):
+            pass
+
+        def tick(self, n):
+            pass
+
+        def stop(self):
+            pass
+
+        def screenshot(self):
+            return b""
+
+    class FakeFalling:
+        name = "O"
+
+    class FakeState:
+        def __init__(self, falling):
+            self.falling = falling
+            self.board = np.zeros((18, 10), dtype=bool)
+            self.next_piece = "I"
+            self.game_over = False
+
+    states = [FakeState(FakeFalling()), FakeState(None)]
+
+    def fake_read_state(emu):
+        return states.pop(0) if len(states) > 1 else states[0]
+
+    class FakeController:
+        def __init__(self, emu, ticks_per_press=4):
+            pass
+
+        def execute(self, target):
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+        def run_out(self):
+            return ExecResult(locked=True, misexec=0, lines_delta=0, replanned=False)
+
+    class CapturingStreamer:
+        def __init__(self):
+            self.events = []
+
+        def send_event(self, event):
+            self.events.append(event)
+
+        def send_frame(self, turn, png):
+            pass
+
+    monkeypatch.setattr("tetris_agent.emulator.Emulator", FakeEmu)
+    monkeypatch.setattr("tetris_agent.agent.Controller", FakeController)
+    monkeypatch.setattr("tetris_agent.agent.read_state", fake_read_state)
+
+    streamer = CapturingStreamer()
+    result = run_arm(Arm("heuristic"), seed=0, rom_path="rom.gb", max_pieces=1, streamer=streamer, grade_quality=False)
+
+    assert result.error == ""  # the fake run really completed
+    assert "placement_graded" not in [e.get("event_type") for e in streamer.events]
+    assert list(tmp_path.iterdir()) == [], "no trace directory should exist under RUNS_DIR"

@@ -64,6 +64,12 @@ tokens over pi's wall clock — low for terse arms by construction). The same ar
 move ~100 race between sessions on identical settings, so treat ±100 at one seed as
 noise.
 
+Rows carrying `regret` / `top1` / `top3` are graded against the two-ply oracle
+in `quality.py`, with the genome recorded per decision. State that in the
+write-up, and put a `--lookahead-control` row in the same table: regret is
+disagreement with the oracle, not distance from optimal, and a model can score
+above the oracle's own arm.
+
 ## Harness comparisons
 
 [`2026-09-03-situation-router.md`](2026-09-03-situation-router.md) is the first

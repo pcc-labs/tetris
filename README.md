@@ -73,6 +73,33 @@ flatlined arm is attributable: slow hardware or an overspent thinking budget.
 it reads low for terse arms and is comparable across pi arms, not with a
 provider's decode rate.)
 
+### Placement quality
+
+Every decision is graded against a two-ply oracle: the same weighted
+evaluation the control arm plays with, searched one piece deeper. A row
+reports `regret` (0 is the oracle's own choice, 1 is the worst legal
+placement), `top1` and `top3`.
+
+The oracle is a strong heuristic, not ground truth. Regret is disagreement with
+a two-ply evaluator, so a model that outplays the oracle shows high regret; the
+`--lookahead-control` arm puts the oracle's own score in the same table so the
+comparison is visible. Regret is also per-move and path-relative: each decision
+is graded against the board the model built, so a ruined board played well
+scores near zero. Accumulated damage shows up in lines, holes and pieces
+survived instead.
+
+Grades are written to `runs/<id>/events.jsonl` as `placement_graded` events,
+alongside the spawn, decision and lock events the exemplar miner already reads.
+`--no-quality` disables grading and the trace directory it writes; the
+`regret` / `top1` / `top3` columns still render, as `n/a`.
+
+Grading costs 4–33 ms per decision. That cost is never charged to a live
+decision's budget: grading runs after the piece has locked, in the gap
+between pieces, with the game not advancing — the same reason it never costs
+gravity distance. The one-ply `heuristic` control arm — 490 on the live
+screen (random 140, no-input 55) — comes back with a normalized regret of
+0.15 against the two-ply oracle: the gap the extra ply of search buys.
+
 ### Reasoning level
 
 Thinking-capable models take `--efforts off|low|medium|high`, and the level is

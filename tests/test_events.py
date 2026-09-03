@@ -88,3 +88,46 @@ def test_decision_event_includes_tokens_only_when_given():
     assert "tokens" not in plain["data"]
     counted = build_decision_event(2, Placement(rotation=1, col=3, score=0.5), latency_ms=10.0, tokens=180)
     assert counted["data"]["tokens"] == 180
+
+
+def test_graded_event_carries_the_grade_and_leaves_the_decision_event_alone():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.events import build_decision_event, build_graded_event
+    from tetris_agent.policy import Placement
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :6] = True
+    chosen = Placement(rotation=0, col=7, score=0.0)
+    g = quality.grade(board, "O", "I", chosen)
+
+    event = build_graded_event(turn=4, grade=g)
+    assert event["event_type"] == "placement_graded"
+    assert event["turn"] == 4
+    assert event["data"]["rank"] == g.rank
+    assert event["data"]["regret_norm"] == round(g.regret_norm, 6)
+
+    # The decision event must be byte-identical to before this feature.
+    decision = build_decision_event(turn=4, placement=chosen)
+    assert set(decision["data"]) == {"rotation", "col", "score"}
+
+
+def test_collector_publishes_a_graded_event():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.events import EventCollector
+    from tetris_agent.policy import Placement
+
+    published = []
+
+    class Sink:
+        def publish(self, event):
+            published.append(event)
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :6] = True
+    collector = EventCollector(Sink())
+    collector.graded(quality.grade(board, "O", "I", Placement(rotation=0, col=7, score=0.0)))
+    assert [e["event_type"] for e in published] == ["placement_graded"]

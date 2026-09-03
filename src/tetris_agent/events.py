@@ -53,6 +53,16 @@ def build_locked_event(turn: int, lines_delta: int, features: Features, misexec:
     )
 
 
+def build_graded_event(turn: int, grade) -> dict:
+    """A decision scored against the lookahead oracle (see quality.py).
+
+    Separate from `placement_decision` because that event is published before
+    execution, so the viewer can render the think-freeze, and the grade does not
+    exist until the piece has locked.
+    """
+    return _envelope("placement_graded", turn, grade.to_dict())
+
+
 def build_stuck_event(turn: int, streak: int, detail: str) -> dict:
     return _envelope("stuck", turn, {"streak": streak, "detail": detail})
 
@@ -96,3 +106,6 @@ class EventCollector:
 
     def game_over(self, fitness: dict) -> None:
         self.publisher.publish(build_game_over_event(self.turn, fitness))
+
+    def graded(self, grade, turn: int | None = None) -> None:
+        self.publisher.publish(build_graded_event(self.turn if turn is None else turn, grade))

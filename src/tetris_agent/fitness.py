@@ -11,6 +11,8 @@ class FitnessTracker:
         self._max_streak = 0
         self._max_stack = 0
         self._topped_out = False
+        self._regrets: list[float] = []
+        self._ranks: list[int] = []
 
     def on_lock(self, features: Features, misexec: int) -> None:
         self._holes.append(features.holes)
@@ -22,8 +24,15 @@ class FitnessTracker:
     def on_game_over(self) -> None:
         self._topped_out = True
 
+    def on_grade(self, grade) -> None:
+        """One decision scored against the oracle. Late and fallback placements
+        never reach here, so the averages describe choices the model actually made."""
+        self._regrets.append(grade.regret_norm)
+        self._ranks.append(grade.rank)
+
     def compute(self, score: int, lines: int, level: int) -> dict:
         pieces = len(self._holes)
+        graded = len(self._regrets)
         return {
             "score": score,
             "lines": lines,
@@ -34,6 +43,10 @@ class FitnessTracker:
             "misexec_count": self._misexec_count,
             "max_misexec_streak": self._max_streak,
             "topped_out": self._topped_out,
+            "graded_decisions": graded,
+            "mean_regret": round(sum(self._regrets) / graded, 4) if graded else None,
+            "top1_rate": round(sum(1 for r in self._ranks if r == 1) / graded, 3) if graded else None,
+            "top3_rate": round(sum(1 for r in self._ranks if r <= 3) / graded, 3) if graded else None,
         }
 
 

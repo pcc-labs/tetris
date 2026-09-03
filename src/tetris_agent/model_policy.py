@@ -83,6 +83,9 @@ class LLMPlacementPolicy:
             "gen_ms_total": 0.0,
         }
         self.last_reason = ""
+        # True when `plan` fell back to the first legal placement because every
+        # attempt failed. Not a choice, so the grader skips it.
+        self.last_fallback = False
         self.last_output_tokens: int | None = None
         # Live mode sets this before each decision; None means no clock.
         self.deadline_s: float | None = None
@@ -103,6 +106,7 @@ class LLMPlacementPolicy:
             self.harness, board, piece, next_piece, legal, turn, deadline_s=self.deadline_s, situation=situation
         )
         choice = self._decide(prompt, legal)
+        self.last_fallback = choice is None
         if choice is None:
             # Every attempt failed; keep the run alive with a deterministic
             # fallback so the arm is still comparable, and count it as illegal.
@@ -223,8 +227,18 @@ class ModelPolicy(LLMPlacementPolicy):
         exemplar_block: str = "",
         clock=time.monotonic,
         genome: Genome | None = None,
+        fixed_effort: bool = False,
     ):
-        super().__init__(model, harness, effort, max_tokens, exemplar_block, clock=clock, genome=genome)
+        super().__init__(
+            model,
+            harness,
+            effort,
+            max_tokens,
+            exemplar_block,
+            clock=clock,
+            genome=genome,
+            fixed_effort=fixed_effort,
+        )
         # X-Tapes-Agent-Name tags captured turns when the traffic exits
         # through a tapes proxy (scripts/tapes-up.sh, scripts/vm-demo.sh);
         # api.anthropic.com ignores it when no proxy is in the path. Session
