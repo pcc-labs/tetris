@@ -142,7 +142,9 @@ class ListPublisher:
         self.events.append(event)
 
 
-def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, session_meta=None, policy=None, grader=None):
+def _paused_agent_fixtures(
+    monkeypatch, think_s, deadline_s, max_pieces=1, session_meta=None, policy=None, grader=None, clock=None
+):
     import numpy as np
 
     from tetris_agent.agent import TetrisAgent
@@ -150,7 +152,7 @@ def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, sessi
     from tetris_agent.events import EventCollector
     from tetris_agent.policy import Genome
 
-    clock = TickClock()
+    clock = clock or TickClock()
     calls = []
 
     class FakeController:
@@ -315,11 +317,15 @@ def test_the_frozen_board_is_captured_at_spawn_so_watchers_see_it(monkeypatch):
 # ---- placement grading -------------------------------------------------
 
 
-def _fake_grader(calls, regret=0.25, rank=2):
-    """A grader that records what it was asked and answers instantly."""
+def _fake_grader(calls, clock=None, grade_s=7, regret=0.25, rank=2):
+    """A grader that records what it was asked and, when given a clock,
+    advances it — so a test using this grader can tell whether grading's own
+    cost was charged to the recorded decision latency."""
 
     def grade(board, piece, next_piece, placement):
         calls.append((piece, placement.rotation, placement.col))
+        if clock is not None:
+            clock.advance(grade_s)
         return SimpleNamespace(
             regret_norm=regret,
             rank=rank,
@@ -344,9 +350,19 @@ class FallbackPolicy:
 
 
 def test_grading_is_not_charged_to_the_model(monkeypatch):
-    """Recorded latency must be the think time and nothing else."""
+    """Recorded latency must be the think time and nothing else.
+
+    The fake grader advances the shared clock by 7s, the same way SlowPolicy
+    advances it while "thinking". If grading ran before the latency
+    measurement (or the measurement spanned both), the recorded latency
+    would include those 7s; without a clock-advancing grader this test could
+    not fail for the reason it names, since 3000.0 would come back either way.
+    """
     calls = []
-    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=3, deadline_s=15.0, grader=_fake_grader(calls))
+    clock = TickClock()
+    agent, _, publisher = _paused_agent_fixtures(
+        monkeypatch, think_s=3, deadline_s=15.0, grader=_fake_grader(calls, clock=clock), clock=clock
+    )
     agent.run(timer_div=0)
     decision = next(e for e in publisher.events if e["event_type"] == "placement_decision")
     assert decision["data"]["latency_ms"] == 3000.0
