@@ -404,3 +404,24 @@ def test_hard_deadline_kills_the_call_at_exactly_the_deadline():
     p.deadline_s = 15.0
     p.plan(empty_board(), "O", "I", turn=2)
     assert p.runner.timeouts == [180.0, 15.0]
+
+
+def test_routed_system_prompt_and_situation_reach_pi():
+    import subprocess
+
+    import numpy as np
+
+    from tetris_agent.pi_policy import PiPolicy
+    from tetris_agent.prompts import ROUTED_SYSTEM_PROMPT
+
+    seen = {}
+
+    def runner(cmd, timeout):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    p = PiPolicy(model="pi/gemma3", runner=runner, harness="routed")
+    p.plan(np.zeros((18, 10), dtype=bool), "T", "O", turn=1)
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--system-prompt") + 1].startswith(ROUTED_SYSTEM_PROMPT)
+    assert "Situation: FLAT" in cmd[-1]

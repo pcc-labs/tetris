@@ -207,8 +207,9 @@ def test_build_policy_threads_exemplar_block_into_pi_arms():
     from tetris_agent.benchmark import Arm, build_policy
 
     arm = Arm(policy="model", model="pi/gemma3", harness="features", effort=None, exemplars=True)
-    p = build_policy(arm, exemplar_block="EXEMPLARS")
+    p = build_policy(arm, genome_params={"well_depth": 5}, exemplar_block="EXEMPLARS")
     assert "EXEMPLARS" in p.system_prompt
+    assert p.genome.well_depth == 5
 
 
 def test_live_arms_carry_a_visible_marker():

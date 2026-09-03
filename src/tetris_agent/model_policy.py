@@ -17,14 +17,15 @@ import time
 import anthropic
 import numpy as np
 
-from tetris_agent.policy import Placement
+from tetris_agent.policy import Genome, Placement
 from tetris_agent.pricing import EFFORTS, cost_usd, spec
 from tetris_agent.prompts import (
     PLACEMENT_SCHEMA,
-    SYSTEM_PROMPT,
     build_user_prompt,
     legal_placements,
+    system_prompt_for,
 )
+from tetris_agent.situation import Situation, classify
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class LLMPlacementPolicy:
         max_tokens: int = MAX_TOKENS,
         exemplar_block: str = "",
         clock=time.monotonic,
+        genome: Genome | None = None,
     ):
         self.model = model
         self.harness = harness
@@ -49,11 +51,14 @@ class LLMPlacementPolicy:
         self.effort = effort if self.spec.supports_effort else None
         self.max_tokens = max_tokens
         self._clock = clock
+        # Situation thresholds for the routed harness — the same genome the heuristic plays with.
+        self.genome = genome or Genome()
         # Exemplars are static across the run, so they belong in the system
         # prompt — cached — never in the per-piece user turn.
-        self.system_prompt = SYSTEM_PROMPT + (f"\n\n{exemplar_block}" if exemplar_block else "")
+        self.system_prompt = system_prompt_for(harness) + (f"\n\n{exemplar_block}" if exemplar_block else "")
         self.name = f"{model}/{harness}" + (f"/{self.effort}" if self.effort else "")
         self._history: list[dict] = []
+        self.last_situation: Situation | None = None
         self.usage = {
             "decisions": 0,
             "input_tokens": 0,
@@ -87,7 +92,11 @@ class LLMPlacementPolicy:
         if not legal:
             return None
 
-        prompt = build_user_prompt(self.harness, board, piece, next_piece, legal, turn, deadline_s=self.deadline_s)
+        situation = classify(board, piece, next_piece, self.genome) if self.harness == "routed" else None
+        self.last_situation = situation
+        prompt = build_user_prompt(
+            self.harness, board, piece, next_piece, legal, turn, deadline_s=self.deadline_s, situation=situation
+        )
         choice = self._decide(prompt, legal)
         if choice is None:
             # Every attempt failed; keep the run alive with a deterministic
@@ -206,8 +215,9 @@ class ModelPolicy(LLMPlacementPolicy):
         max_tokens: int = MAX_TOKENS,
         exemplar_block: str = "",
         clock=time.monotonic,
+        genome: Genome | None = None,
     ):
-        super().__init__(model, harness, effort, max_tokens, exemplar_block, clock=clock)
+        super().__init__(model, harness, effort, max_tokens, exemplar_block, clock=clock, genome=genome)
         # X-Tapes-Agent-Name tags captured turns when the traffic exits
         # through a tapes proxy (scripts/tapes-up.sh, scripts/vm-demo.sh);
         # api.anthropic.com ignores it when no proxy is in the path. Session

@@ -87,8 +87,9 @@ def build_policy(cfg: Config):
     from tetris_agent.genome import load_params
     from tetris_agent.policy import Genome, HeuristicPolicy
 
+    genome = Genome.from_params(load_params())
     if cfg.policy == "heuristic":
-        return HeuristicPolicy(Genome.from_params(load_params()))
+        return HeuristicPolicy(genome)
     from tetris_agent.pricing import is_pi
 
     block = ""
@@ -99,10 +100,10 @@ def build_policy(cfg: Config):
     if is_pi(cfg.model):
         from tetris_agent.pi_policy import PiPolicy
 
-        return PiPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block)
+        return PiPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block, genome=genome)
     from tetris_agent.model_policy import ModelPolicy
 
-    return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block)
+    return ModelPolicy(model=cfg.model, harness=cfg.harness, effort=cfg.effort, exemplar_block=block, genome=genome)
 
 
 def _agent_class(live: bool):
