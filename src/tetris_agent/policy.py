@@ -119,9 +119,13 @@ class LookaheadPolicy:
     teacher, and `quality`'s regret column means nothing without this row.
     """
 
-    def __init__(self, genome: Genome | None = None, ply: int = 2):
+    def __init__(self, genome: Genome | None = None, ply: int | None = None):
+        # Imported here, not at module scope: quality imports Genome from this
+        # module, so a top-level import would be circular.
+        from tetris_agent.quality import DEFAULT_PLY
+
         self.genome = genome or Genome()
-        self.ply = ply
+        self.ply = ply if ply is not None else DEFAULT_PLY
         self.name = "lookahead"
 
     def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
