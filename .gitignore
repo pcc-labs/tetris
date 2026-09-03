@@ -15,3 +15,4 @@ dist/
 
 # never commit ROMs (copyrighted)
 *.gb
+.superpowers/
