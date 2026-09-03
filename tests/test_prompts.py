@@ -133,3 +133,44 @@ def test_deadline_line_appended_only_when_given():
     timed = build_user_prompt("features", board, "O", "I", legal, 1, deadline_s=7.4)
     assert timed.startswith(plain)
     assert "about 7 seconds before this piece locks" in timed
+
+
+def test_routed_prompt_names_the_situation_and_scopes_the_numbers():
+    board = empty_board()
+    legal = legal_placements(board, "T")
+    prompt = build_user_prompt("routed", board, "T", "O", legal, 1)
+    assert "Situation: FLAT" in prompt
+    assert "-> holes 0, bumpiness" in prompt  # FLAT's metrics, nothing else
+    assert "aggregate height" not in prompt
+    assert "Choose one of them." in prompt
+
+
+def test_routed_prompt_accepts_a_precomputed_situation():
+    from tetris_agent.situation import Kind, Situation
+
+    board = empty_board()
+    legal = legal_placements(board, "O")
+    prompt = build_user_prompt("routed", board, "O", "I", legal, 1, situation=Situation(Kind.HOLE_RISK))
+    assert "Situation: HOLE_RISK" in prompt
+    listing = prompt.split("Legal placements")[1]
+    assert "-> holes" in listing and "bumpiness" not in listing
+
+
+def test_routed_sits_between_legal_and_features_in_length():
+    board = empty_board()
+    legal = legal_placements(board, "T")
+    sizes = {h: len(build_user_prompt(h, board, "T", "I", legal, 1)) for h in ("legal", "routed", "features")}
+    assert sizes["legal"] < sizes["routed"] < sizes["features"]
+
+
+def test_system_prompt_for_only_swaps_for_routed():
+    from tetris_agent.prompts import ROUTED_SYSTEM_PROMPT, SYSTEM_PROMPT, system_prompt_for
+
+    assert system_prompt_for("features") is SYSTEM_PROMPT
+    assert system_prompt_for("chat") is SYSTEM_PROMPT
+    assert system_prompt_for("routed") is ROUTED_SYSTEM_PROMPT
+    assert "# What good play looks like" in SYSTEM_PROMPT
+    assert "# What good play looks like" not in ROUTED_SYSTEM_PROMPT
+    assert "# How to play" in ROUTED_SYSTEM_PROMPT
+    assert ROUTED_SYSTEM_PROMPT.startswith("You are playing Game Boy Tetris")
+    assert ROUTED_SYSTEM_PROMPT.endswith("one short sentence of reasoning.")

@@ -12,8 +12,9 @@ import numpy as np
 
 from tetris_agent.board import COLS, Features, drop, features, place
 from tetris_agent.pieces import SHAPES, distinct_rotations, shape_width
+from tetris_agent.situation import METRICS, Situation, classify, situation_block
 
-HARNESSES = ("board", "legal", "features", "chat")
+HARNESSES = ("board", "legal", "features", "chat", "routed")
 
 PLACEMENT_SCHEMA = {
     "type": "object",
@@ -28,7 +29,7 @@ PLACEMENT_SCHEMA = {
 
 # Static across every decision in a run, so it caches. Keep the volatile board
 # out of here — it goes in the user turn, after the cache breakpoint.
-SYSTEM_PROMPT = """\
+_PREAMBLE = """\
 You are playing Game Boy Tetris. You choose where each falling piece lands; a
 controller executes your choice exactly. Your goal is to survive as long as
 possible and clear as many lines as you can.
@@ -60,6 +61,9 @@ The piece then drops straight down from that column and locks where it lands.
 cells wide can only use columns 0 through 6. A choice whose piece would hang
 off the right edge, or that cannot fit at all, is illegal and will be rejected.
 
+"""
+
+_GOOD_PLAY = """\
 # What good play looks like
 
 - Clearing lines is the only way to score, and the only way to reduce height.
@@ -73,7 +77,30 @@ off the right edge, or that cannot fit at all, is illegal and will be rejected.
   that strands it.
 - Losing happens when the stack reaches the top. Survival beats greed.
 
-Respond with your chosen placement and one short sentence of reasoning."""
+"""
+
+# The routed harness names the situation and the technique each turn, so the
+# general guidance above is replaced by "follow it" — the whole point is that
+# the model spends its output on the placement, not on re-deriving strategy.
+_ROUTED_PLAY = """\
+# How to play
+
+Each turn names the board's situation and the one technique it calls for, then
+lists the legal placements with only the numbers that technique cares about.
+Follow the technique rather than re-deriving strategy from the board. Losing
+happens when the stack reaches the top; survival beats greed.
+
+"""
+
+_CLOSING = "Respond with your chosen placement and one short sentence of reasoning."
+
+SYSTEM_PROMPT = _PREAMBLE + _GOOD_PLAY + _CLOSING
+ROUTED_SYSTEM_PROMPT = _PREAMBLE + _ROUTED_PLAY + _CLOSING
+
+
+def system_prompt_for(harness: str) -> str:
+    """The cached system prompt for a harness; only `routed` swaps the play guidance."""
+    return ROUTED_SYSTEM_PROMPT if harness == "routed" else SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)
@@ -120,6 +147,10 @@ def _shapes_block(piece: str) -> str:
     return "\n".join(parts)
 
 
+def _metric(p: LegalPlacement, name: str) -> int:
+    return p.lines if name == "lines" else getattr(p.features, name)
+
+
 def build_user_prompt(
     harness: str,
     board: np.ndarray,
@@ -128,6 +159,7 @@ def build_user_prompt(
     placements: list[LegalPlacement],
     turn: int,
     deadline_s: float | None = None,
+    situation: Situation | None = None,
 ) -> str:
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness {harness!r}; known: {HARNESSES}")
@@ -148,6 +180,21 @@ def build_user_prompt(
             header
             + "\n\nLegal placements:\n"
             + "\n".join(lines)
+            + "\n\nChoose one of them."
+        )
+    elif harness == "routed":
+        situation = situation or classify(board, piece, next_piece)
+        scoped = [
+            f"  rotation={p.rotation} col={p.col} -> "
+            + ", ".join(f"{m.replace('_', ' ')} {_metric(p, m)}" for m in METRICS[situation.kind])
+            for p in placements
+        ]
+        body = (
+            header
+            + "\n\n"
+            + situation_block(situation, board, piece, next_piece)
+            + "\n\nLegal placements, with the numbers this situation turns on:\n"
+            + "\n".join(scoped)
             + "\n\nChoose one of them."
         )
     else:

@@ -266,3 +266,35 @@ def test_illegal_retry_is_skipped_when_the_deadline_is_tight():
     assert placement is not None  # deterministic fallback
     assert len(p.client.messages.calls) == 1
     assert p.stats()["retry_count"] == 0
+
+
+def test_routed_harness_swaps_the_system_prompt_and_names_the_situation():
+    from tetris_agent.prompts import ROUTED_SYSTEM_PROMPT
+
+    p = policy([FakeResponse({"rotation": 0, "col": 3, "reason": "flat"})], harness="routed")
+    p.plan(empty_board(), "T", "O", turn=1)
+    call = p.client.messages.calls[0]
+    assert call["system"][0]["text"] == ROUTED_SYSTEM_PROMPT
+    assert "Situation: FLAT" in call["messages"][-1]["content"]
+    assert p.last_situation.kind.value == "FLAT"
+
+
+def test_routed_thresholds_come_from_the_policy_genome():
+    from tetris_agent.policy import Genome
+
+    p = policy(
+        [FakeResponse({"rotation": 0, "col": 3, "reason": "x"})],
+        harness="routed",
+        genome=Genome(topping_out_height=1),
+    )
+    board = empty_board()
+    board[17, 0] = True
+    p.plan(board, "T", "O", turn=1)
+    assert "Situation: TOPPING_OUT" in p.client.messages.calls[0]["messages"][-1]["content"]
+
+
+def test_non_routed_harness_has_no_situation():
+    p = policy([FakeResponse({"rotation": 0, "col": 3, "reason": "x"})], harness="features")
+    p.plan(empty_board(), "T", "O", turn=1)
+    assert p.last_situation is None
+    assert "Situation:" not in p.client.messages.calls[0]["messages"][-1]["content"]

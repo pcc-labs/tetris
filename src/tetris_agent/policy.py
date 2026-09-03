@@ -23,6 +23,10 @@ class Genome:
     w_bumpiness: float = -0.184483
     # Controller timing; healed when the misexecution rule fires.
     ticks_per_press: int = 4
+    # Situation thresholds (situation.py) for the routed harness; tuned like any other knob.
+    topping_out_height: int = 12  # max column height that flips play into survival mode
+    mound_rise: int = 3  # highest column minus lowest that counts as a mound
+    well_depth: int = 4  # rows a one-column well must span to be Tetris-ready
 
     def to_params(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}

@@ -195,10 +195,11 @@ class PiPolicy(LLMPlacementPolicy):
         exemplar_block: str = "",
         clock=time.monotonic,
         hard_deadline: bool = False,
+        genome=None,
     ):
         if not model.startswith(PI_PREFIX):
             raise ValueError(f"PiPolicy needs a {PI_PREFIX}* model id, got {model!r}")
-        super().__init__(model, harness, effort, exemplar_block=exemplar_block, clock=clock)
+        super().__init__(model, harness, effort, exemplar_block=exemplar_block, clock=clock, genome=genome)
         self.ollama_model = model.removeprefix(PI_PREFIX)
         self.runner = runner or _run_pi
         self.timeout_s = timeout_s

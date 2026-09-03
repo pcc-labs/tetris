@@ -109,8 +109,9 @@ def expand_arms(
 def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: str = ""):
     from tetris_agent.policy import Genome, HeuristicPolicy, NoInputPolicy, RandomPolicy
 
+    genome = Genome.from_params(genome_params or {})
     if arm.policy == "heuristic":
-        return HeuristicPolicy(Genome.from_params(genome_params or {}))
+        return HeuristicPolicy(genome)
     if arm.policy == "no-input":
         return NoInputPolicy()
     if arm.policy == "random":
@@ -126,10 +127,13 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
             exemplar_block=block,
             # Bounded pause: the deadline is the whole budget, kill at the mark.
             hard_deadline=arm.deadline_s is not None and not arm.live,
+            genome=genome,
         )
     from tetris_agent.model_policy import ModelPolicy
 
-    return ModelPolicy(model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block)
+    return ModelPolicy(
+        model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block, genome=genome
+    )
 
 
 def _arm_meta(arm: Arm, seed: int, max_pieces: int) -> dict:
