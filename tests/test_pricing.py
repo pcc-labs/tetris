@@ -31,5 +31,12 @@ def test_unlisted_cloud_tag_is_refused_rather_than_priced_free():
         spec("pi/brand-new:7b-cloud")
 
 
+def test_local_roster_tags_accept_the_thinking_flag():
+    """The local effort matrix needs --thinking to reach these; unlisted tags run effort-free."""
+    for tag in ("pi/gemma4:latest", "pi/gemma4:26b", "pi/gemma4-31b-32k", "pi/laguna-xs-32k"):
+        assert spec(tag).supports_effort is True, tag
+        assert cost_usd(tag, 1_000_000, 1_000_000) == 0.0
+
+
 def test_unlisted_local_pi_model_is_still_free():
     assert cost_usd("pi/brand-new:7b", 1_000_000, 1_000_000) == 0.0

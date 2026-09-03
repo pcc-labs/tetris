@@ -46,6 +46,14 @@ MODELS: dict[str, ModelSpec] = {
     "pi/nemotron-3.5-lightning-32k": ModelSpec("pi/nemotron-3.5-lightning-32k", 0.0, 0.0, True, 0),
     "pi/qwen3:8b": ModelSpec("pi/qwen3:8b", 0.0, 0.0, False, 0),
     "pi/gemma3": ModelSpec("pi/gemma3", 0.0, 0.0, False, 0),
+    # The local reasoning-level roster (2026-09-03): gemma4 e4b (the 9.6 GB
+    # `latest`), the 26B-A4B MoE, the dense 31B at num_ctx 32k, and Poolside's
+    # laguna-xs 33B-A3B. All take --thinking; each is listed in ~/.pi/agent/
+    # models.json with the off map, or the flag would be dropped (see above).
+    "pi/gemma4:latest": ModelSpec("pi/gemma4:latest", 0.0, 0.0, True, 0),
+    "pi/gemma4:26b": ModelSpec("pi/gemma4:26b", 0.0, 0.0, True, 0),
+    "pi/gemma4-31b-32k": ModelSpec("pi/gemma4-31b-32k", 0.0, 0.0, True, 0),
+    "pi/laguna-xs-32k": ModelSpec("pi/laguna-xs-32k", 0.0, 0.0, True, 0),
     # Ollama cloud tags proxy through the local daemon but bill the account's
     # credits at the "Cost /1M tokens" rate on each tag's ollama.com page
     # (read 2026-09-03). They take pi's --thinking — Ollama's OpenAI endpoint maps

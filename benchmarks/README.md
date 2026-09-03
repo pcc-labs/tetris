@@ -36,14 +36,23 @@ was built on.
 The reference screen since 2026-09-03 is **live gravity with the effort pinned**:
 seed 1, 30-piece cap, `features`, `--efforts off low medium --fixed-effort`, arms
 labeled `+live+fixed`. Its top row is `pi/nemotron-3-super:cloud/features/off` at race
-**730**; gpt-oss:120b `low` is 570 and gpt-oss:20b `low` 530. The standing goal is a
-**local** model that matches those; the Anthropic arms are paused.
+**730**; gpt-oss:120b `low` is 570 and gpt-oss:20b `low` 530. The local reference on the
+same screen is `pi/gemma4:26b/features/off` at **530** (`2026-09-03-local-reasoning-matrix.md`).
+The standing goal is a **local** model that matches the cloud top; the Anthropic arms are
+paused.
 
 The earlier screen — `--decision-deadline 15` (+p15), the game frozen per piece — is
 where the 08-22 and the first 09-03 files live, with `pi/gpt-oss:120b-cloud/features`
 at 530 as its reference. It hides speed under 15 s, so its rows rank reasoning quality
 only, and every cloud row on it ran at Ollama's default thinking (the flag was not
 reaching the model). Compare rows within a screen, never across.
+
+Effort matrices leave out `glm-5.3`, `glm-5.3-flash`, `minimax-m3` and `nemotron-3-ultra`:
+as served on 2026-09-03 they ignore `reasoning_effort` / `think:false` and reason anyway
+(glm in the visible output, minimax in a thinking block, nemotron-ultra never answers),
+so they flatline at every level. Their `off` rows are in `2026-09-03-cloud-thinking.md`
+and, for glm-5.3-flash, the addendum of the live matrix file. This is a serving/model
+behaviour, not a capability verdict; re-probe before assuming it still holds.
 
 Effort matrices carry two columns the harness matrices did not need: the tag's
 published rate (`$/M in / out`, from `pricing.MODELS`) and `tok/s` (end-to-end, output
@@ -73,6 +82,7 @@ shorter prompt get a flatlined model a decision?".
 | `2026-09-03-local-roster-routed.md` | matrix (harness) | gemma4, qwen 27B, gemma 31B, laguna-xs under `features` and `routed` |
 | `2026-09-03-cloud-roster.md` | matrix | every Ollama cloud tag (14 arms) under the 15 s screen at Ollama's default thinking; gemma4 31B plays when served fast, ten frontier tags never answer |
 | `2026-09-03-cloud-thinking.md` | matrix (effort) | gpt-oss:120b at off/low/medium/high, then the roster with thinking off; `low` 570 and deepseek-v4-pro `off` 590 are the new tops, seven flatliners become players |
+| `2026-09-03-local-reasoning-matrix.md` | matrix (effort × model, live, local) | seven local models × {off, low, medium} with power sampled; gemma4:26b `off` 530 is local parity with the cloud 530 cluster |
 | `2026-09-03-live-reasoning-matrix.md` | matrix (effort × model, live) | thirteen cloud models × {off, low, medium} on live gravity with effort pinned; eleven play only at off, nemotron-3-super `off` 730 leads, gpt-oss:20b `low` 530, deepseek-v4-flash `off` 510 |
 
 ## Piece caps and what a score means
