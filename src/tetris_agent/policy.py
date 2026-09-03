@@ -110,6 +110,35 @@ class HeuristicPolicy:
         return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}
 
 
+class LookaheadPolicy:
+    """Two-ply ceiling arm: plays the oracle that grades every other arm.
+
+    Opt-in, never a default baseline, so adding it cannot change the rows an
+    existing command produces. Its score is the evidence that the grader's
+    rankings are worth trusting as labels — a teacher that plays badly is a bad
+    teacher, and `quality`'s regret column means nothing without this row.
+    """
+
+    def __init__(self, genome: Genome | None = None, ply: int = 2):
+        self.genome = genome or Genome()
+        self.ply = ply
+        self.name = "lookahead"
+
+    def plan(self, board: np.ndarray, piece: str, next_piece: str, turn: int) -> Placement | None:
+        # Imported here, not at module scope: quality imports Genome from this
+        # module, so a top-level import would be circular.
+        from tetris_agent.quality import rank_placements
+
+        ranked = rank_placements(board, piece, next_piece, self.genome, self.ply)
+        if not ranked:
+            return None
+        (rotation, col), value = ranked[0]
+        return Placement(rotation=rotation, col=col, score=value)
+
+    def stats(self) -> dict:
+        return {"policy": self.name, "decisions": 0, "cost_usd": 0.0}
+
+
 class NoInputPolicy:
     """Floor arm: nobody plays. Every piece lands where it spawned.
 

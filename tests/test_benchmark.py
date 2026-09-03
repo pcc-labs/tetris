@@ -479,6 +479,27 @@ def test_render_table_includes_the_deadline_columns():
     assert "timeouts" in table and "pct_le_15s" in table
 
 
+def test_lookahead_arm_is_opt_in_and_absent_by_default():
+    """A command run yesterday must produce the same rows tomorrow."""
+    default = [a.name for a in expand_arms(["claude-opus-5"], ["board"], ["low"])]
+    assert "lookahead" not in default
+
+    opted = [a.name for a in expand_arms(["claude-opus-5"], ["board"], ["low"], lookahead_control=True)]
+    assert "lookahead" in opted
+    assert opted[: len(default)] == default  # appended, nothing reordered
+
+
+def test_build_policy_dispatches_the_lookahead_arm():
+    from tetris_agent.policy import LookaheadPolicy
+
+    assert isinstance(build_policy(Arm("lookahead")), LookaheadPolicy)
+
+
+def test_lookahead_arm_costs_nothing_in_the_estimate():
+    arms = expand_arms([], [], [], lookahead_control=True)
+    assert estimate_cost(arms, [0], max_pieces=50) == 0.0
+
+
 def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
     rc = main(
         [

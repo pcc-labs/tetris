@@ -100,3 +100,27 @@ def test_random_policy_returns_none_when_nothing_fits():
     from tetris_agent.policy import RandomPolicy
 
     assert RandomPolicy().plan(np.ones((18, 10), dtype=bool), "T", "I", turn=1) is None
+
+
+def test_lookahead_policy_plays_the_oracles_own_choice():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.policy import Genome, LookaheadPolicy
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :7] = True
+    policy = LookaheadPolicy()
+    placement = policy.plan(board, "T", "I", turn=1)
+    best = quality.rank_placements(board, "T", "I", Genome(), ply=2)[0][0]
+    assert (placement.rotation, placement.col) == best
+    assert policy.name == "lookahead"
+    assert policy.stats()["cost_usd"] == 0.0
+
+
+def test_lookahead_policy_returns_none_when_nothing_fits():
+    import numpy as np
+
+    from tetris_agent.policy import LookaheadPolicy
+
+    assert LookaheadPolicy().plan(np.ones((18, 10), dtype=bool), "T", "I", turn=1) is None

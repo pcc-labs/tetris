@@ -83,6 +83,7 @@ def expand_arms(
     live: bool = True,
     deadline_s: float | None = None,
     fixed_effort: bool = False,
+    lookahead_control: bool = False,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -110,11 +111,15 @@ def expand_arms(
         if arm.name not in seen:
             seen.add(arm.name)
             arms.append(arm)
+    # Appended last, never inserted: a command run before this flag existed
+    # must produce the same rows in the same order, plus this one at the end.
+    if lookahead_control:
+        arms.append(Arm(policy="lookahead"))
     return arms
 
 
 def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: str = ""):
-    from tetris_agent.policy import Genome, HeuristicPolicy, NoInputPolicy, RandomPolicy
+    from tetris_agent.policy import Genome, HeuristicPolicy, LookaheadPolicy, NoInputPolicy, RandomPolicy
 
     genome = Genome.from_params(genome_params or {})
     if arm.policy == "heuristic":
@@ -123,6 +128,8 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
         return NoInputPolicy()
     if arm.policy == "random":
         return RandomPolicy()
+    if arm.policy == "lookahead":
+        return LookaheadPolicy(genome)
     block = exemplar_block if arm.exemplars else ""
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
@@ -403,6 +410,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--no-control", action="store_true", help="skip the heuristic control arm")
     parser.add_argument(
+        "--lookahead-control",
+        action="store_true",
+        help="add the two-ply oracle as a ceiling arm (the arm that placement quality is graded against)",
+    )
+    parser.add_argument(
         "--paused",
         action="store_true",
         help="freeze the emulator during model calls (legacy mode, for A/B against historical rows)",
@@ -478,6 +490,7 @@ def main(argv=None) -> int:
         live=not args.paused,
         deadline_s=args.decision_deadline,
         fixed_effort=args.fixed_effort,
+        lookahead_control=args.lookahead_control,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
