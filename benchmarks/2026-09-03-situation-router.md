@@ -16,7 +16,7 @@ regressing against `legal` and `features`.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | gpt-oss:120b-cloud/legal | 50 | 0 | 0 | 10 | 7 | 30.0 | 3 | 7 | 1,809 | 1,112 | 41.37 | $0.00 |
 | **gpt-oss:120b-cloud/features** | **530** | **380** | **9** | **30** | 0 | 100.0 | 30 | 0 | 560 | 30,795 | 2.93 | $0.00 |
-| gpt-oss:120b-cloud/routed | 190 | 40 | 1 | 30 | 2 | 93.3 | 28 | 2 | 253 | 18,821 | 3.00 | $0.00 |
+| gpt-oss:120b-cloud/routed | 190 | 40 | 1 | 30 | 2 | 93.3 | 28 | 2 | 253 | 18,821 | 2.99 | $0.00 |
 | gpt-oss:20b-cloud/legal | 55 | 0 | 0 | 11 | 10 | 9.1 | 1 | 10 | 967 | 364 | 161.75 | $0.00 |
 | **gpt-oss:20b-cloud/features** | **170** | **40** | **1** | **26** | 8 | 69.2 | 18 | 8 | 623 | 19,825 | 13.84 | $0.00 |
 | gpt-oss:20b-cloud/routed | 80 | 0 | 0 | 16 | 8 | 50.0 | 8 | 8 | 268 | 5,211 | 18.83 | $0.00 |
@@ -31,7 +31,7 @@ name (expected, per the sweep design); the local arm has no API bill by definiti
 ## Per-model read
 
 **gpt-oss:120b-cloud**: `routed` cut tok/decision by 55% versus `features` (253 vs 560) but
-latency was flat (~3.0s either way — cloud serving speed, not token count, is the floor
+latency was flat (~3.0s either way, suggesting serving speed, not token count, sets the floor
 here). Race collapsed from 530 to 190 and score from 380 (9 lines) to 40 (1 line): `features`
 ran clean (0 illegal, 0 timeouts, 100% ≤15s), `routed` picked up 2 illegal placements and 2
 timeouts. `legal` is the outlier — 1,809 tok/decision and 41s/decision, flatlining at 10
@@ -63,7 +63,8 @@ Under `features` the order was gpt-oss:120b-cloud (530) far ahead, then gpt-oss:
 gpt-oss:20b (local) tied at 170. Routing does not change who's on top — 120b-cloud stays
 first — but it **flips the runner-up**: the local model, tied with the cloud 20b under
 `features`, pulls ahead of it under `routed` (175 vs 80). Routing hurt the cloud 20b more than
-the local 20b, even though both are the same weights served differently.
+the local 20b. They share weights but not serving backend, quantization or context handling,
+and this is one seed, so which of those explains the gap is not something this run can say.
 
 On the ≲300 tok/decision viability bar from 08-22: **all three arms cross it under `routed`**
 (253, 268, 210) — including both cloud arms, which sat well above it under `features` (560,
