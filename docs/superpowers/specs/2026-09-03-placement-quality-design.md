@@ -183,6 +183,22 @@ oracle's own arm would show high regret while playing better. Every write-up usi
 columns must say what the labels are relative to, and the ceiling arm's score belongs in
 the same table.
 
+**Regret is per-move and path-relative.** Each decision is graded against the board the
+model actually built, not against the board the oracle would have built playing from the
+start, and the column is a mean rather than a running total. That is what the training
+goal wants: the label answers "from this position, what was the best move", so one bad
+move does not poison every label after it. It also means a model can ruin its board, play
+the ruin flawlessly, and post near-zero mean regret while losing. Accumulated damage lives
+in the outcome columns instead: lines, average holes, pieces survived, topped out. The two
+halves of a row measure different things and neither substitutes for the other.
+
+Summing regret instead of averaging would grow with every move, conflating bad play with
+long survival, which is the trap `race_score` already navigates. A genuinely cumulative
+measure is available later at no new cost: the piece sequence is deterministic, so the
+`lookahead` arm on the same seed yields a reference curve of board value per piece to
+compare a model's curve against. That is a reporting layer over records this design
+already produces, and is deliberately out of scope here.
+
 **Genome drift** makes labels session-dependent. Mitigated by recording the weights with
 each grade.
 
