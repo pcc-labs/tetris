@@ -17,7 +17,7 @@
 - **Unmeasured is not zero.** An ungraded run reports `n/a`, never `0.0`, matching the existing energy-column convention.
 - **Grade after the lock**, never between the decision and its execution.
 - **TDD.** Every step writes the test first and watches it fail.
-- **Style.** `uv run ruff check src tests` and `uv run ruff format` must pass. One pre-existing failure is expected in the suite: `tests/test_power.py::test_scoped_sudoers_entry_counts_as_available` is macOS-only and fails on Linux. One pre-existing ruff error exists in `tests/test_live_agent.py`. Neither is yours to fix.
+- **Style.** `uv run ruff check` and `uv run ruff format` must pass **on the files your task touched, and only those**. The repo carries pre-existing format drift, so `ruff format src tests` rewrites files outside your task and must not be run. One pre-existing failure is expected in the suite: `tests/test_power.py::test_scoped_sudoers_entry_counts_as_available` is macOS-only and fails on Linux. One pre-existing ruff error exists in `tests/test_live_agent.py`. Neither is yours to fix.
 - **Run the suite with** `uv run pytest -q`.
 - **Existing tie-break**, used everywhere placements are ranked: `(value, landing row, -abs(col - 4))`, maximum wins. It comes from `policy.plan_placement` and must not be reinvented.
 
@@ -877,7 +877,9 @@ Expected: all pass.
 
 ```bash
 uv run pytest -q   # expect only the known macOS-only power failure
-uv run ruff format src tests
+# Format ONLY the files this task touched: the repo has pre-existing format
+# drift, and `ruff format src tests` would rewrite files outside this task.
+uv run ruff format src/tetris_agent/fitness.py src/tetris_agent/benchmark.py tests/test_fitness.py tests/test_benchmark.py
 uv run ruff check src/tetris_agent/fitness.py src/tetris_agent/benchmark.py
 git add src/tetris_agent/fitness.py src/tetris_agent/benchmark.py tests/test_fitness.py tests/test_benchmark.py
 git commit -m "feat: regret, top1 and top3 columns
@@ -1070,9 +1072,11 @@ Expected: all pass.
 - [ ] **Step 5: Lint and commit**
 
 ```bash
-uv run ruff format src tests
+# Format ONLY the files this task touched: the repo has pre-existing format
+# drift, and `ruff format src tests` would rewrite files outside this task.
+uv run ruff format src/tetris_agent/agent.py src/tetris_agent/model_policy.py tests/test_agent.py tests/test_pi_policy.py
 uv run ruff check src/tetris_agent/agent.py src/tetris_agent/model_policy.py
-git add src/tetris_agent/agent.py src/tetris_agent/model_policy.py tests/test_agent.py tests/test_model_policy.py
+git add src/tetris_agent/agent.py src/tetris_agent/model_policy.py tests/test_agent.py tests/test_pi_policy.py
 git commit -m "feat: grade decisions in the paused loop
 
 After the locked event, so the cost lands between pieces and never inside a
@@ -1378,8 +1382,10 @@ Expected: identical `race_score`, `score`, `lines`, `pieces`, `avg_holes`. The s
 - [ ] **Step 6: Lint and commit**
 
 ```bash
-uv run ruff format src tests
-uv run ruff check src tests
+# Format ONLY the files this task touched: the repo has pre-existing format
+# drift, and `ruff format src tests` would rewrite files outside this task.
+uv run ruff format src/tetris_agent/benchmark.py src/tetris_agent/cli.py tests/test_benchmark.py tests/test_traces.py
+uv run ruff check src/tetris_agent/benchmark.py src/tetris_agent/cli.py tests/test_benchmark.py tests/test_traces.py
 git add src/tetris_agent/benchmark.py src/tetris_agent/cli.py tests/test_benchmark.py tests/test_traces.py
 git commit -m "feat: grade benchmark arms and record their traces
 
