@@ -7,7 +7,8 @@ threads, no sleeps.
 
 from types import SimpleNamespace
 
-from test_manual import CapturingPublisher, FakeEmulator, falling_at, state_with
+import numpy as np
+from test_manual import CapturingPublisher, FakeEmulator, board_with, falling_at, state_with
 
 from tetris_agent.controller import ExecResult
 from tetris_agent.events import EventCollector
@@ -417,14 +418,19 @@ def test_decision_event_carries_the_calls_output_tokens(monkeypatch):
 
 def _fake_grader(calls):
     def grade(board, piece, next_piece, placement):
-        calls.append((piece, next_piece, placement.rotation, placement.col))
+        calls.append((board, piece, next_piece, placement.rotation, placement.col))
         return SimpleNamespace(regret_norm=0.25, rank=2, to_dict=lambda: {"rank": 2, "regret_norm": 0.25})
 
     return grade
 
 
 def test_live_grades_an_executed_decision_after_the_lock(monkeypatch):
-    """Order must read spawn -> decision -> locked -> graded."""
+    """Order must read spawn -> decision -> locked -> graded, and the board
+    handed to the grader must be board identity, not just piece-name strings —
+    a grader silently fed the post-lock board would be the wrong-but-plausible
+    failure this feature most needs to catch."""
+    pre_decision_board = board_with(0)
+    post_lock_board = board_with(4)
     timeline = [
         state_with(falling_at(0, 3, name="J")),
         state_with(None, filled=4),
@@ -447,8 +453,13 @@ def test_live_grades_an_executed_decision_after_the_lock(monkeypatch):
     kinds = [e["event_type"] for e in pub.events]
     assert "placement_graded" in kinds
     assert kinds.index("piece_locked") < kinds.index("placement_graded")
-    # The board and next piece handed to the grader are the ones the decision saw.
-    assert calls == [("J", "I", 0, 0)]
+    assert len(calls) == 1
+    graded_board, piece, next_piece, rotation, col = calls[0]
+    # The board and next piece handed to the grader are the ones the decision
+    # saw — the pre-decision board, never the board read back after the lock.
+    assert (piece, next_piece, rotation, col) == ("J", "I", 0, 0)
+    assert np.array_equal(graded_board, pre_decision_board)
+    assert not np.array_equal(graded_board, post_lock_board)
 
 
 def test_a_piece_that_locks_without_a_decision_is_not_graded(monkeypatch):
