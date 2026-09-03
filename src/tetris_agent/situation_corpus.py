@@ -200,6 +200,9 @@ def main(argv=None) -> int:
         return 0
 
     counts = histogram(args.runs_dir)
+    if not any(counts[p] for p in counts):
+        print(f"no boards classified under {args.runs_dir} — run `tetris-situations generate` first")
+        return 1
     print(render(counts))
     out = Path(args.runs_dir) / "histogram.json"
     out.write_text(json.dumps({k: dict(v) for k, v in counts.items()}, indent=2))

@@ -94,7 +94,12 @@ def min_new_holes(board: np.ndarray, piece: str) -> int | None:
 def classify(
     board: np.ndarray, piece: str, next_piece: str, genome: Genome | None = None
 ) -> Situation:
-    """Name the board's situation. First match in priority order wins."""
+    """Name the board's situation. First match in priority order wins.
+
+    `next_piece` is not used by the classification itself (the queue only changes
+    the technique text in `situation_block`); it is kept so both functions take
+    the same arguments.
+    """
     g = genome or Genome()
     heights = column_heights(board)
     if int(heights.max()) >= g.topping_out_height:

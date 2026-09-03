@@ -10,6 +10,21 @@ Hypothesis (spec section 08, refined in the plan): a named technique makes the m
 deliberate less — output tokens per decision and latency fall — without `race`/`score`
 regressing against `legal` and `features`.
 
+## Session-to-session drift: the same `features` arms on 08-22 and today
+
+Same seed, cap, deadline, harness and effort — and every arm moved between sessions:
+
+| arm (`features`, +p15, seed 1) | 08-22 | 09-03 |
+|---|---|---|
+| gpt-oss:120b-cloud | race 430, 2 lines, 593 tok/decision | race 530, 9 lines, 560 tok/decision |
+| gpt-oss:20b-cloud | race 135, 20 decisions | race 170, 18 decisions |
+| gpt-oss:20b (local) | race 90, 9 decisions, 153 tok/decision | race 170, 16 decisions, 277 tok/decision |
+
+That is why this sweep re-ran `features` in the same session instead of reusing the 08-22
+rows: the within-session comparisons below are sound, but ±100 race at one seed is inside
+the session-to-session swing and is not a result. In particular, the local arm's "175 vs
+170" under `routed` vs `features` is a tie, not an improvement.
+
 ## Results (seed 1, 30-piece cap, +p15)
 
 | arm | race | score | lines | pieces | timeouts | %≤15s | decisions | illegal | tok/decision | in tok | s/decision | cost |
@@ -23,6 +38,10 @@ regressing against `legal` and `features`.
 | gpt-oss:20b (local)/legal | 65 | 0 | 0 | 13 | 4 | 69.2 | 9 | 4 | 342 | 4,204 | 15.21 | $0.00 |
 | gpt-oss:20b (local)/features | 170 | 40 | 1 | 26 | 10 | 61.5 | 16 | 10 | 277 | 15,213 | 16.26 | $0.00 |
 | **gpt-oss:20b (local)/routed** | **175** | **40** | **1** | **27** | 9 | 66.7 | 18 | 9 | 210 | 11,477 | 12.79 | $0.00 |
+
+Arm ids as recorded in the JSON: `pi/gpt-oss:120b-cloud/<harness>+p15`,
+`pi/gpt-oss:20b-cloud/<harness>+p15`, `pi/gpt-oss:20b/<harness>/medium+p15` (the local arm
+is the only one that supports effort). The table shortens them for readability.
 
 Cost is $0.00 across the board: the cloud models (`gpt-oss:120b-cloud`, `gpt-oss:20b-cloud`)
 are unlisted in `pricing.py` so they ran effort-free with no `/medium` suffix in the arm
@@ -47,7 +66,7 @@ timeouts eating the full 15s clock each).
 
 **gpt-oss:20b (local)**: the one arm where the hypothesis holds as written. `routed` cut
 tok/decision 24% versus `features` (210 vs 277) *and* latency fell 21% (12.8s vs 16.3s/decision),
-while race improved slightly (175 vs 170), score held (40, 1 line), and pieces survived rose
+while race held (175 vs 170, a tie), score held (40, 1 line), and pieces survived rose
 (27 vs 26). `legal` sits between the other two harnesses on race (65) but is not directly
 comparable — fewer decisions completed (9 vs 16–18) before the run ended.
 
@@ -76,14 +95,31 @@ still (210) without costing race.
 **Partially supported, and it plainly lost for two of three models.** Tok/decision fell under
 `routed` versus `features` for every model (55%, 57%, 24% respectively) — the token-reduction
 half of the hypothesis holds across the board. But the "without race/score regressing" half
-only held for **gpt-oss:20b (local)**, where latency also fell and race/score held or ticked
-up. For **gpt-oss:120b-cloud** and **gpt-oss:20b-cloud**, `routed` lost hard on race and score
+only held for **gpt-oss:20b (local)**, where latency also fell and race/score held or was a
+tie. For **gpt-oss:120b-cloud** and **gpt-oss:20b-cloud**, `routed` lost hard on race and score
 against `features` (530→190 and 380→40 score for the 120b; 170→80 and a lost line for the
 20b-cloud), and latency did not improve in step with the token cut (flat for 120b-cloud, worse
 for 20b-cloud). The cloud arms also picked up illegal placements/timeouts under `routed` that
 `features` didn't have (120b-cloud: 0→2 each). Which situations are implicated is not
 measurable yet — `placement_decision` events don't carry the situation the model was told;
 that is the first follow-up.
+
+## Follow-ups
+
+- **Annotation/technique coherence (candidate cause of the cloud regression).** Two of the
+  five techniques ask for something the placement annotations do not show: MOUND (64.5 % of
+  boards) says "without opening a hole" but `METRICS[MOUND]` shows only `bumpiness`;
+  HOLE_RISK says "as low on the board as possible" but shows only `holes`; TETRIS_READY's
+  non-I branch shows only `lines`, which is 0 on every row. The cloud arms picked up illegal
+  placements and timeouts under `routed` that `features` did not have. Not changed here —
+  it would orphan these rows — so the fix is a `routed-v2` metrics table and a re-run.
+- **Record `situation` on `placement_decision` events** (both `agent.py` and
+  `live_agent.py`) so a model run can be broken down per situation; without it the
+  regression above cannot be attributed.
+- **`tetris-bench` has no genome path.** `build_policy`/`run_arm` accept `genome_params`
+  but `main` never passes one, so sweeps always classify with default thresholds and the
+  spec's "evolve.py tunes them" cannot be exercised through the benchmark. One-liner plus a
+  decision about whether the control arm should start reading `data/genome.json` too.
 
 Runs: `data/benchmarks/benchmark-20260903-034956.json`, `data/benchmarks/benchmark-20260903-040108.json`.
 Skipped: `claude-haiku-4-5` and `claude-sonnet-5` — no `ANTHROPIC_API_KEY` set in this session

@@ -105,3 +105,10 @@ def test_generate_records_replayable_runs(tmp_path, rom_path):
     assert captured[0]["policy"] == "heuristic" and len(captured[0]["board"]) == 18
     counts = histogram(tmp_path)
     assert sum(counts["heuristic"].values()) == 5
+
+
+def test_cli_histogram_on_empty_corpus_exits_1(tmp_path, capsys):
+    from tetris_agent.situation_corpus import main
+
+    assert main(["histogram", str(tmp_path)]) == 1
+    assert "no boards classified" in capsys.readouterr().out

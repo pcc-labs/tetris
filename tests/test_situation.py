@@ -102,3 +102,17 @@ def test_situation_block_states_the_technique_for_the_queue():
     assert "spans 3 rows" in situation_block(Situation(Kind.MOUND), MOUND, "T", "O")
     assert "12 rows high" in situation_block(Situation(Kind.TOPPING_OUT), board_from(*(["#########."] * 12)), "T", "O")
     assert situation_block(Situation(Kind.FLAT), board_from(), "T", "O").startswith("Situation: FLAT")
+
+
+def test_hole_risk_beats_mound_for_o_and_mound_wins_for_t():
+    # A saw surface raised to range 3: O has no hole-free placement (HOLE_RISK), T is a MOUND.
+    saw3 = board_from("#.#.#.#.#.", "#.#.#.#.#.", "#.#.#.#.#.")
+    assert classify(saw3, "O", "T").kind is Kind.HOLE_RISK
+    assert classify(saw3, "T", "O").kind is Kind.MOUND
+
+
+def test_tetris_ready_beats_hole_risk():
+    # A ready well over a saw: O would open a hole anywhere, but the well wins the priority.
+    ready_over_saw = board_from("#.#.#.#.#.", *(["#########."] * 4))
+    assert min_new_holes(ready_over_saw, "O") >= 1
+    assert classify(ready_over_saw, "O", "T").kind is Kind.TETRIS_READY

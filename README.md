@@ -35,8 +35,8 @@ The harness is the interesting axis — it is how much of the reasoning is done
   (`situation.py`) — with the one technique it calls for and only the
   consequence numbers that technique turns on. The general play guidance in the
   system prompt is replaced by "follow the named technique"; the thresholds are
-  genome fields. Run `uv run tetris-situations` to see the class split over a
-  free corpus (`benchmarks/2026-09-03-situation-histogram.md`).
+  genome fields. Run `uv run tetris-situations generate` then `uv run tetris-situations histogram`
+  to see the class split over a free corpus (`benchmarks/2026-09-03-situation-histogram.md`).
 
 The reference that matters is **human play**: `tetris-play` records your own
 games as traces (see below), and the `no-input` / `random` arms bound the floor
