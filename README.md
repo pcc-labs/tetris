@@ -90,10 +90,13 @@ survived instead.
 
 Grades are written to `runs/<id>/events.jsonl` as `placement_graded` events,
 alongside the spawn, decision and lock events the exemplar miner already reads.
-`--no-quality` turns all of it off.
+`--no-quality` disables grading and the trace directory it writes; the
+`regret` / `top1` / `top3` columns still render, as `n/a`.
 
-Grading costs 4–33 ms per decision, negligible against a live decision's
-multi-second budget. The one-ply `heuristic` control arm — 490 on the live
+Grading costs 4–33 ms per decision. That cost is never charged to a live
+decision's budget: grading runs after the piece has locked, in the gap
+between pieces, with the game not advancing — the same reason it never costs
+gravity distance. The one-ply `heuristic` control arm — 490 on the live
 screen (random 140, no-input 55) — comes back with a normalized regret of
 0.15 against the two-ply oracle: the gap the extra ply of search buys.
 
