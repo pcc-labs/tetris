@@ -64,22 +64,34 @@ def test_two_ply_differs_from_one_ply_when_the_greedy_move_traps_the_next_piece(
     assert [rc for rc, _ in one] != [rc for rc, _ in two]
 
 
-def test_a_dead_next_piece_falls_back_to_the_one_ply_value():
-    """No legal reply must not crash, and must not produce a non-finite value.
+def test_a_lethal_placement_ranks_last_when_live_options_exist():
+    """The reviewer's minimal case: several legal placements for the current
+    piece, of which only one leaves the next piece with nowhere to go. The
+    lethal placement must rank LAST, not first. Asserting finiteness alone
+    is not enough to catch the original bug — that test's board had exactly
+    one legal placement, so there was nothing to compare a rank against; the
+    inverted valuation (dead placement scoring highest) shipped anyway.
 
-    Column 9 is left permanently empty so no row is ever fully True (placing
-    a piece can't accidentally clear a line and free up space). Columns 0-2,
-    5-8 are filled solid, blocking every column pair except (3, 4), which is
-    open for exactly the two rows an O needs. That is the only legal
-    placement for the current piece; once it lands there, every column but 9
-    is solid, so the next O has nowhere to go.
+    Columns 0-2 and 7-8 are solid full height. Columns 3-6 are open only at
+    rows 0-1 (solid below). Column 9 is left fully empty so no row is ever
+    completely full (a line clear would change the board this test relies
+    on). An O piece can only land at col 3, 4 or 5 (each lands at row 0,
+    filling that column pair for rows 0-1). Landing at col 4 splits the rest
+    of the opening into two isolated single-width gaps (col 3 and col 6),
+    neither of which an O can occupy, so the next O has no legal reply.
+    Landing at col 3 or col 5 instead leaves one two-wide gap the next O can
+    fill.
     """
     board = empty_board()
     board[:, 0:3] = True
-    board[2:18, 3:5] = True
-    board[:, 5:9] = True
+    board[:, 7:9] = True
+    board[2:18, 3:7] = True
+
     ranked = quality.rank_placements(board, "O", "O", ply=2)
-    assert ranked, "the current piece must still have a legal placement"
+    assert len(ranked) > 1, "the test needs several placements to compare a rank against"
+    placements = [rc for rc, _ in ranked]
+    assert set(placements) == {(0, 3), (0, 4), (0, 5)}
+    assert placements[-1] == (0, 4), "the lethal placement must rank last"
     for _, value in ranked:
         assert np.isfinite(value)
 
@@ -126,8 +138,18 @@ def test_an_all_equal_board_is_zero_regret_not_a_division_by_zero():
 
 
 def test_a_placement_outside_the_legal_set_is_not_graded():
-    board = np.ones((18, 10), dtype=bool)
-    assert quality.grade(board, "T", "I", Placement(rotation=0, col=0, score=0.0)) is None
+    """The board must have legal placements, so `grade` reaches the `index is
+    None` branch this test is named for, instead of exiting earlier at the
+    `if not ranked` guard (which an all-solid board hits vacuously)."""
+    board = rough_board()
+    ranked = quality.rank_placements(board, "T", "I")
+    assert ranked, "the board must offer a legal placement for this test to mean anything"
+    taken = {rc for rc, _ in ranked}
+    # T at col=9 is out of bounds for a 3-wide shape on a 10-wide board, so it
+    # can never be in the legal set regardless of the board's contents.
+    illegal = Placement(rotation=0, col=9, score=0.0)
+    assert (illegal.rotation, illegal.col) not in taken
+    assert quality.grade(board, "T", "I", illegal) is None
 
 
 def test_the_grade_records_the_weights_it_used():

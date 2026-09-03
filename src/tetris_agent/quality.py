@@ -20,6 +20,17 @@ from tetris_agent.policy import Genome, Placement
 
 DEFAULT_PLY = 2
 
+# A placement whose next piece has no legal reply ends the game, so it must
+# rank below every surviving placement. Finite (not -inf/NaN, so `regret` and
+# `regret_norm` stay well behaved) and encoded in the value itself, not only
+# in sort order, since `grade` computes regret from the values it returns.
+# With the default weights the worst reachable board value is roughly -190,
+# so this constant sits comfortably below anything achievable while staying
+# finite. See docs/superpowers/specs/2026-09-03-placement-quality-design.md
+# ("The oracle") for the measurement that caught the earlier one-ply fallback
+# scoring a guaranteed top-out above every survivable move.
+TOP_OUT_VALUE = -1e6
+
 
 def _value(board: np.ndarray, lines: int, genome: Genome) -> float:
     """The control arm's evaluation, so the oracle and the solver agree at ply=1."""
@@ -52,9 +63,11 @@ def rank_placements(
     """[((rotation, col), value)], best first.
 
     At ply=1 this is `policy.plan_placement`'s ranking, tie-break included. At
-    ply=2 each placement is worth the best reply the known next piece has to it;
-    a placement that leaves the next piece nowhere to go keeps its one-ply value
-    rather than scoring as unboundedly bad.
+    ply=2 each placement is worth the best reply the known next piece has to
+    it; a placement that leaves the next piece nowhere to go ends the game,
+    so it is worth `TOP_OUT_VALUE`, not its one-ply value — the two scales
+    are not comparable, and scoring it by the one-ply value would rank a
+    guaranteed top-out above every placement that survives.
     """
     genome = genome or Genome()
     scored = []
@@ -67,8 +80,7 @@ def rank_placements(
                 board2, lines2 = place(after, shape2, col2, row2)
                 reply = _value(board2, lines + lines2, genome)
                 best_reply = reply if best_reply is None else max(best_reply, reply)
-            if best_reply is not None:
-                value = best_reply
+            value = best_reply if best_reply is not None else TOP_OUT_VALUE
         # Tie-break from policy.plan_placement: deeper landing, then centermost.
         scored.append(((rot, col), value, row, -abs(col - 4)))
     scored.sort(key=lambda e: (e[1], e[2], e[3]), reverse=True)
