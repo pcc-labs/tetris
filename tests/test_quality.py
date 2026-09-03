@@ -3,7 +3,7 @@
 import numpy as np
 
 from tetris_agent import quality
-from tetris_agent.policy import Genome, plan_placement
+from tetris_agent.policy import Genome, Placement, plan_placement
 
 PIECES = ("I", "J", "L", "O", "S", "T", "Z")
 
@@ -82,3 +82,70 @@ def test_a_dead_next_piece_falls_back_to_the_one_ply_value():
     assert ranked, "the current piece must still have a legal placement"
     for _, value in ranked:
         assert np.isfinite(value)
+
+
+def placement_of(entry):
+    (rotation, col), value = entry
+    return Placement(rotation=rotation, col=col, score=value)
+
+
+def test_grading_the_oracles_own_choice_is_zero_regret_rank_one():
+    board = rough_board()
+    ranked = quality.rank_placements(board, "T", "I")
+    g = quality.grade(board, "T", "I", placement_of(ranked[0]))
+    assert g.rank == 1
+    assert g.regret == 0.0
+    assert g.regret_norm == 0.0
+    assert g.best == g.chosen
+    assert g.legal_count == len(ranked)
+
+
+def test_grading_the_worst_legal_choice_is_last_rank_and_full_regret():
+    board = rough_board()
+    ranked = quality.rank_placements(board, "T", "I")
+    g = quality.grade(board, "T", "I", placement_of(ranked[-1]))
+    assert g.rank == g.legal_count == len(ranked)
+    assert g.regret_norm == 1.0
+    assert g.regret > 0
+
+
+def test_an_all_equal_board_is_zero_regret_not_a_division_by_zero():
+    """An empty board with an O piece and bumpiness zeroed: every column is worth the same.
+
+    With the default genome, an O piece on an empty board is not actually tied
+    across every column: edge columns (0 and 8) have lower bumpiness than
+    interior ones, so col=7 would tie for worst, not for best. Zeroing
+    w_bumpiness removes that edge effect so every legal column is genuinely
+    equal in value, which is what this test needs to exercise the
+    best_value == worst_value guard.
+    """
+    genome = Genome(w_bumpiness=0)
+    g = quality.grade(empty_board(), "O", "O", Placement(rotation=0, col=7, score=0.0), genome=genome, ply=1)
+    assert g.regret_norm == 0.0
+    assert g.best_value == g.worst_value
+
+
+def test_a_placement_outside_the_legal_set_is_not_graded():
+    board = np.ones((18, 10), dtype=bool)
+    assert quality.grade(board, "T", "I", Placement(rotation=0, col=0, score=0.0)) is None
+
+
+def test_the_grade_records_the_weights_it_used():
+    """The healer mutates the weights, so a label is only reproducible with them."""
+    genome = Genome(w_holes=-0.9)
+    board = rough_board()
+    # Grade a placement taken from the ranking, so it is legal by construction.
+    chosen = placement_of(quality.rank_placements(board, "T", "I", genome)[0])
+    g = quality.grade(board, "T", "I", chosen, genome=genome)
+    assert g.genome["w_holes"] == -0.9
+    assert g.ply == 2
+
+
+def test_to_dict_is_json_safe_and_carries_the_ranking():
+    import json
+
+    board = rough_board()
+    ranked = quality.rank_placements(board, "T", "I")
+    payload = quality.grade(board, "T", "I", placement_of(ranked[1])).to_dict()
+    assert json.loads(json.dumps(payload))["rank"] == 2
+    assert payload["best"] == list(ranked[0][0])

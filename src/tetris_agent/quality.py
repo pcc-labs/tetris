@@ -10,11 +10,13 @@ a two-ply evaluator, so a model that outplays the oracle would show high regret.
 The `lookahead` arm exists to put the oracle's own score in the same table.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from tetris_agent.board import COLS, drop, features, place
 from tetris_agent.pieces import SHAPES, distinct_rotations, shape_width
-from tetris_agent.policy import Genome
+from tetris_agent.policy import Genome, Placement
 
 DEFAULT_PLY = 2
 
@@ -71,3 +73,87 @@ def rank_placements(
         scored.append(((rot, col), value, row, -abs(col - 4)))
     scored.sort(key=lambda e: (e[1], e[2], e[3]), reverse=True)
     return [(placement, value) for placement, value, _, _ in scored]
+
+
+@dataclass(frozen=True)
+class Grade:
+    """One decision, scored against the oracle's ranking of the same board.
+
+    `regret` is in the evaluation's arbitrary units, whose scale grows with
+    board height, so `regret_norm` is the comparable one. Both are per-move and
+    path-relative: the board graded is the one the model built, not the one the
+    oracle would have built, so a ruined board played well scores near zero.
+    Accumulated damage lives in the outcome metrics instead.
+    """
+
+    chosen: tuple[int, int]
+    best: tuple[int, int]
+    chosen_value: float
+    best_value: float
+    worst_value: float
+    rank: int
+    legal_count: int
+    regret: float
+    regret_norm: float
+    ply: int
+    genome: dict
+
+    def to_dict(self) -> dict:
+        return {
+            "chosen": list(self.chosen),
+            "best": list(self.best),
+            "chosen_value": round(self.chosen_value, 6),
+            "best_value": round(self.best_value, 6),
+            "worst_value": round(self.worst_value, 6),
+            "rank": self.rank,
+            "legal_count": self.legal_count,
+            "regret": round(self.regret, 6),
+            "regret_norm": round(self.regret_norm, 6),
+            "ply": self.ply,
+            "genome": self.genome,
+        }
+
+
+def grade(
+    board: np.ndarray,
+    piece: str,
+    next_piece: str | None,
+    chosen: Placement,
+    genome: Genome | None = None,
+    ply: int = DEFAULT_PLY,
+) -> Grade | None:
+    """Score `chosen` against every alternative, or None if it cannot be graded.
+
+    None means the choice was not in the legal set — a guard, not a path, since
+    the policy validates against the same enumeration.
+    """
+    genome = genome or Genome()
+    ranked = rank_placements(board, piece, next_piece, genome, ply)
+    if not ranked:
+        return None
+    key = (chosen.rotation, chosen.col)
+    index = next((i for i, (placement, _) in enumerate(ranked) if placement == key), None)
+    if index is None:
+        return None
+    best_value, worst_value = ranked[0][1], ranked[-1][1]
+    chosen_value = ranked[index][1]
+    regret = best_value - chosen_value
+    span = best_value - worst_value
+    return Grade(
+        chosen=key,
+        best=ranked[0][0],
+        chosen_value=chosen_value,
+        best_value=best_value,
+        worst_value=worst_value,
+        rank=index + 1,
+        legal_count=len(ranked),
+        regret=regret,
+        regret_norm=(regret / span) if span > 0 else 0.0,
+        ply=ply,
+        genome={
+            "w_lines": genome.w_lines,
+            "w_agg_height": genome.w_agg_height,
+            "w_holes": genome.w_holes,
+            "w_bumpiness": genome.w_bumpiness,
+        },
+    )
