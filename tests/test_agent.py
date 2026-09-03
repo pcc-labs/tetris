@@ -1,8 +1,10 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from tetris_agent.cli import build_config
+from tetris_agent.policy import Placement
 
 
 def test_build_config_defaults():
@@ -140,7 +142,7 @@ class ListPublisher:
         self.events.append(event)
 
 
-def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, session_meta=None, policy=None):
+def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, session_meta=None, policy=None, grader=None):
     import numpy as np
 
     from tetris_agent.agent import TetrisAgent
@@ -205,6 +207,7 @@ def _paused_agent_fixtures(monkeypatch, think_s, deadline_s, max_pieces=1, sessi
         decision_deadline_s=deadline_s,
         session_meta=session_meta,
         clock=clock,
+        grader=grader,
     )
     return agent, calls, publisher
 
@@ -249,9 +252,7 @@ def test_deadline_survives_policies_that_have_no_deadline_attribute(monkeypatch)
             del self.deadline_s
 
     clock = TickClock()
-    agent, calls, _ = _paused_agent_fixtures(
-        monkeypatch, think_s=1, deadline_s=15.0, policy=NoDeadlinePolicy(clock, 1)
-    )
+    agent, calls, _ = _paused_agent_fixtures(monkeypatch, think_s=1, deadline_s=15.0, policy=NoDeadlinePolicy(clock, 1))
     agent.run(timer_div=0)  # must not raise
     assert calls == ["execute"]
 
@@ -261,9 +262,7 @@ def test_session_meta_lands_on_the_session_start_event(monkeypatch):
     agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=1, deadline_s=15.0, session_meta=meta)
     agent.run(timer_div=1)
 
-    start = next(
-        e for e in publisher.events if e["event_type"] == "session" and e["data"]["phase"] == "start"
-    )
+    start = next(e for e in publisher.events if e["event_type"] == "session" and e["data"]["phase"] == "start")
     assert start["data"]["model"] == "pi/gpt-oss:20b"
     assert start["data"]["arm"] == "pi/gpt-oss:20b/features/medium+p15"
 
@@ -279,9 +278,7 @@ def test_spawn_is_published_before_the_policy_starts_thinking(monkeypatch):
             self.publisher = publisher
 
         def plan(self, board, piece, next_piece, turn):
-            seen["spawns_before_plan"] = sum(
-                1 for e in self.publisher.events if e["event_type"] == "piece_spawn"
-            )
+            seen["spawns_before_plan"] = sum(1 for e in self.publisher.events if e["event_type"] == "piece_spawn")
             seen["turn_arg"] = turn
             return super().plan(board, piece, next_piece, turn)
 
@@ -307,11 +304,78 @@ def test_the_frozen_board_is_captured_at_spawn_so_watchers_see_it(monkeypatch):
 
     frames_at_plan = []
     clock = TickClock()
-    agent, _, _ = _paused_agent_fixtures(
-        monkeypatch, think_s=1, deadline_s=15.0, policy=ProbeSinkPolicy(clock, 1)
-    )
+    agent, _, _ = _paused_agent_fixtures(monkeypatch, think_s=1, deadline_s=15.0, policy=ProbeSinkPolicy(clock, 1))
     agent.frame_sinks.append(lambda turn, png: frames.append(turn))
     agent.emu.screenshot = lambda: b"png"
     agent.run(timer_div=0)
 
     assert frames_at_plan == [1]  # exactly one frame captured before thinking began
+
+
+# ---- placement grading -------------------------------------------------
+
+
+def _fake_grader(calls, regret=0.25, rank=2):
+    """A grader that records what it was asked and answers instantly."""
+
+    def grade(board, piece, next_piece, placement):
+        calls.append((piece, placement.rotation, placement.col))
+        return SimpleNamespace(
+            regret_norm=regret,
+            rank=rank,
+            to_dict=lambda: {"rank": rank, "regret_norm": regret},
+        )
+
+    return grade
+
+
+class FallbackPolicy:
+    """A policy whose every answer is the deterministic fallback, not a choice."""
+
+    name = "fallback"
+    last_reason = ""
+    last_fallback = True
+
+    def plan(self, board, piece, next_piece, turn):
+        return Placement(rotation=0, col=0, score=0.0)
+
+    def stats(self):
+        return {"policy": self.name, "decisions": 1, "cost_usd": 0.0}
+
+
+def test_grading_is_not_charged_to_the_model(monkeypatch):
+    """Recorded latency must be the think time and nothing else."""
+    calls = []
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=3, deadline_s=15.0, grader=_fake_grader(calls))
+    agent.run(timer_div=0)
+    decision = next(e for e in publisher.events if e["event_type"] == "placement_decision")
+    assert decision["data"]["latency_ms"] == 3000.0
+    assert calls, "the grader never ran, so this proves nothing"
+
+
+def test_the_graded_event_follows_the_lock(monkeypatch):
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=3, deadline_s=15.0, grader=_fake_grader([]))
+    agent.run(timer_div=0)
+    kinds = [e["event_type"] for e in publisher.events]
+    assert kinds.index("piece_locked") < kinds.index("placement_graded")
+
+
+def test_a_late_decision_is_not_graded(monkeypatch):
+    """Gravity placed the piece; the model's choice never ran."""
+    calls = []
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=20, deadline_s=15.0, grader=_fake_grader(calls))
+    fitness = agent.run(timer_div=0)
+    assert calls == []
+    assert "placement_graded" not in [e["event_type"] for e in publisher.events]
+    assert fitness["graded_decisions"] == 0
+    assert fitness["mean_regret"] is None
+
+
+def test_a_fallback_placement_is_not_graded(monkeypatch):
+    calls = []
+    agent, _, _ = _paused_agent_fixtures(
+        monkeypatch, think_s=3, deadline_s=15.0, policy=FallbackPolicy(), grader=_fake_grader(calls)
+    )
+    fitness = agent.run(timer_div=0)
+    assert calls == []
+    assert fitness["graded_decisions"] == 0

@@ -452,3 +452,15 @@ def test_routed_system_prompt_and_situation_reach_pi():
     cmd = seen["cmd"]
     assert cmd[cmd.index("--system-prompt") + 1].startswith(ROUTED_SYSTEM_PROMPT)
     assert "Situation: FLAT" in cmd[-1]
+
+
+def test_last_fallback_marks_a_placement_the_model_did_not_choose():
+    """A fallback is not a decision, so the grader must skip it."""
+    failed = policy([completed("", returncode=1)])
+    failed.plan(empty_board(), "O", "I", turn=1)
+    assert failed.last_fallback is True
+    assert failed.stats()["illegal_count"] == 1
+
+    chose = policy([ok_events()])
+    chose.plan(empty_board(), "O", "I", turn=1)
+    assert chose.last_fallback is False

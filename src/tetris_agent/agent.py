@@ -47,6 +47,8 @@ class TetrisAgent:
         session_meta: dict | None = None,
         clock=time.monotonic,
         meter=None,
+        grader=None,
+        record_frames: bool = True,
     ):
         self.emu = emu
         self.genome = genome
@@ -66,10 +68,12 @@ class TetrisAgent:
         self.decision_deadline_s = decision_deadline_s
         self.session_meta = dict(session_meta or {})
         self._clock = clock
+        self.grader = grader
         self.paused_stats: dict = {"timeouts": 0, "decision_latencies_ms": []}
         if recorder is not None:
             collector.publisher = _Tee(collector.publisher, _RecorderSink(recorder))
-            self.frame_sinks.append(recorder.record_frame)
+            if record_frames:
+                self.frame_sinks.append(recorder.record_frame)
 
     def _capture_frame(self) -> None:
         if not self.frame_sinks:
@@ -126,18 +130,14 @@ class TetrisAgent:
             self.collector.spawn(state.falling.name, state.next_piece)
             self._capture_frame()
             plan_started = self._clock()
-            placement = self.policy.plan(
-                state.board, state.falling.name, state.next_piece, self.collector.turn
-            )
+            placement = self.policy.plan(state.board, state.falling.name, state.next_piece, self.collector.turn)
             latency_ms = (self._clock() - plan_started) * 1000
             if placement is None:
                 self.collector.stuck(streak=0, detail="no placement fits (top-out imminent)")
                 tracker.on_game_over()
                 break
             self.paused_stats["decision_latencies_ms"].append(round(latency_ms, 1))
-            timed_out = (
-                self.decision_deadline_s is not None and latency_ms > self.decision_deadline_s * 1000
-            )
+            timed_out = self.decision_deadline_s is not None and latency_ms > self.decision_deadline_s * 1000
             self.collector.decision(
                 placement,
                 reason=getattr(self.policy, "last_reason", ""),
@@ -157,6 +157,13 @@ class TetrisAgent:
             f = features(post.board)
             tracker.on_lock(f, result.misexec)
             self.collector.locked(result.lines_delta, f, result.misexec, score=self.emu.score)
+            # After the lock, so grading costs the gap between pieces and never
+            # the piece's own fall. Late decisions and fallbacks are not choices.
+            if self.grader is not None and not timed_out and not getattr(self.policy, "last_fallback", False):
+                g = self.grader(state.board, state.falling.name, state.next_piece, placement)
+                if g is not None:
+                    tracker.on_grade(g)
+                    self.collector.graded(g)
             self._capture_frame()
             placed += 1
             if result.replanned:
