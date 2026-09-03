@@ -326,6 +326,7 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                 "tok_s": round(sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1),
                 "cost_usd": round(sum(r.cost for r in runs), 4),
                 **_energy_cells(runs),
+                **_quality_cells(runs),
             }
         )
     return sorted(rows, key=lambda r: r["race_score"], reverse=True)
@@ -346,6 +347,29 @@ def _energy_cells(runs: list[ArmResult]) -> dict:
     return {"energy_wh": round(wh, 3), "energy_usd": round(energy_usd(wh), 4)}
 
 
+def _quality_cells(runs: list[ArmResult]) -> dict:
+    """Placement-quality columns for one arm's rows.
+
+    Weighted by each seed's graded-decision count, so the figure is a mean over
+    decisions rather than a mean of means. `n/a` rather than 0.0 when nothing was
+    graded: quality off and every-decision-late are unknown, not perfect.
+    """
+    scored = [r for r in runs if r.fitness]
+    total = sum(r.fitness.get("graded_decisions") or 0 for r in scored)
+    if not total:
+        return {"regret": "n/a", "top1": "n/a", "top3": "n/a", "graded": 0}
+
+    def weighted(key: str) -> float:
+        return sum((r.fitness.get(key) or 0) * (r.fitness.get("graded_decisions") or 0) for r in scored) / total
+
+    return {
+        "regret": round(weighted("mean_regret"), 4),
+        "top1": round(weighted("top1_rate"), 3),
+        "top3": round(weighted("top3_rate"), 3),
+        "graded": total,
+    }
+
+
 def render_table(rows: list[dict]) -> str:
     if not rows:
         return "(no results)"
@@ -356,6 +380,9 @@ def render_table(rows: list[dict]) -> str:
         "lines",
         "pieces",
         "avg_holes",
+        "regret",
+        "top1",
+        "top3",
         "illegal",
         "late",
         "timeouts",

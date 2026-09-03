@@ -518,3 +518,32 @@ def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
     assert rc == 0
     assert "+p15" in out
     assert "+live" not in out
+
+
+def test_quality_columns_are_na_when_nothing_was_graded():
+    rows = summarize([ArmResult("a", 0, fitness(), {})])
+    assert rows[0]["regret"] == "n/a"
+    assert rows[0]["top1"] == "n/a"
+    assert rows[0]["graded"] == 0
+
+
+def test_quality_columns_weight_seeds_by_their_graded_decisions():
+    graded_a = {**fitness(), "graded_decisions": 10, "mean_regret": 0.10, "top1_rate": 1.0, "top3_rate": 1.0}
+    graded_b = {**fitness(), "graded_decisions": 30, "mean_regret": 0.50, "top1_rate": 0.0, "top3_rate": 0.0}
+    rows = summarize([ArmResult("a", 0, graded_a, {}), ArmResult("a", 1, graded_b, {})])
+    # (0.10*10 + 0.50*30) / 40 = 0.40 — a decision mean, not a mean of means.
+    assert rows[0]["regret"] == 0.4
+    assert rows[0]["top1"] == 0.25
+    assert rows[0]["graded"] == 40
+
+
+def test_quality_columns_appear_in_the_table():
+    rows = summarize(
+        [
+            ArmResult(
+                "a", 0, {**fitness(), "graded_decisions": 1, "mean_regret": 0.0, "top1_rate": 1.0, "top3_rate": 1.0}, {}
+            )
+        ]
+    )
+    table = render_table(rows)
+    assert "regret" in table and "top1" in table and "top3" in table

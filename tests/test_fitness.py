@@ -60,3 +60,59 @@ def test_recorder_writes_frames_immediately(tmp_path):
     frames = sorted((tmp_path / rec.run_id / "frames").iterdir())
     assert [f.name for f in frames] == ["0001-t1.png", "0002-t2.png"]
     assert frames[0].read_bytes() == b"\x89PNG-one"
+
+
+def test_grades_average_over_graded_decisions_only():
+    from types import SimpleNamespace
+
+    from tetris_agent.fitness import FitnessTracker
+
+    tracker = FitnessTracker()
+    for holes in (0, 1, 2):
+        tracker.on_lock(SimpleNamespace(holes=holes, agg_height=0, bumpiness=0, max_height=1), misexec=0)
+    tracker.on_grade(SimpleNamespace(regret_norm=0.0, rank=1))
+    tracker.on_grade(SimpleNamespace(regret_norm=0.5, rank=4))
+    # The third piece was late: never graded.
+
+    out = tracker.compute(score=0, lines=0, level=0)
+    assert out["pieces_placed"] == 3
+    assert out["graded_decisions"] == 2
+    assert out["mean_regret"] == 0.25
+    assert out["top1_rate"] == 0.5
+    assert out["top3_rate"] == 0.5
+
+
+def test_an_ungraded_run_reports_none_not_zero():
+    """Unknown and perfect are different claims, as with energy."""
+    from tetris_agent.fitness import FitnessTracker
+
+    out = FitnessTracker().compute(score=0, lines=0, level=0)
+    assert out["graded_decisions"] == 0
+    assert out["mean_regret"] is None
+    assert out["top1_rate"] is None
+
+
+def test_the_oracle_arm_grades_itself_as_perfect():
+    """The grader's self-test: the arm that plays the oracle must post regret 0.
+
+    If this ever fails, the ranking the arm plays and the ranking the grader
+    scores against have drifted apart, and every regret column is suspect.
+    """
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.fitness import FitnessTracker
+    from tetris_agent.policy import LookaheadPolicy
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :7] = True
+    policy = LookaheadPolicy()
+    tracker = FitnessTracker()
+    for piece, next_piece in (("T", "I"), ("L", "O"), ("S", "Z")):
+        chosen = policy.plan(board, piece, next_piece, turn=1)
+        tracker.on_grade(quality.grade(board, piece, next_piece, chosen))
+
+    out = tracker.compute(score=0, lines=0, level=0)
+    assert out["graded_decisions"] == 3
+    assert out["mean_regret"] == 0.0
+    assert out["top1_rate"] == 1.0
