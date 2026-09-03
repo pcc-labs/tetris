@@ -38,6 +38,32 @@ The harness is the interesting axis — it is how much of the reasoning is done
   genome fields. Run `uv run tetris-situations generate` then `uv run tetris-situations histogram`
   to see the class split over a free corpus (`benchmarks/2026-09-03-situation-histogram.md`).
 
+### What the harnesses have measured so far
+
+The reference arm is `pi/gpt-oss:120b-cloud` under `features` — race 530 at seed 1,
+30 pieces, 15 s deadline — and the standing goal is **a local model that matches it**.
+The Anthropic arms are paused. Race is `score + 5 × pieces survived`, so staying alive
+counts; at the same settings the 08-22 baselines are heuristic 490, random 140,
+no-input 55, and 50 means no decision ever arrived inside the clock.
+
+| model | legal | features | routed |
+|---|---|---|---|
+| gpt-oss:120b-cloud (baseline) | 50 | **530** | 190 |
+| gpt-oss:20b-cloud | 55 | **170** | 80 |
+| gpt-oss:20b (local, 13 GB) | 65 | 170 | **175** |
+| gemma4 (local, 9.6 GB) | — | 50 | **220** |
+| qwen3.6-27b-32k, gemma4-31b-32k, laguna-xs-32k (local) | — | 50 | 50–70 |
+
+Two findings so far. `routed` cuts output tokens per decision for every model, but it
+cost the big cloud model most of its play — a known annotation gap (the `MOUND`
+technique asks the model to avoid holes without showing a holes number) that
+`routed-v2` will fix and re-run. And for the smallest local model the shorter prompt
+is the difference between never answering inside 15 s and being the local leader;
+the dense 27–31B models flatline either way, so the next lever is the prompt gemma4
+sees, not a larger model. Write-ups: `benchmarks/2026-09-03-situation-router.md`,
+`benchmarks/2026-09-03-situation-histogram.md`, `benchmarks/2026-09-03-local-roster-routed.md`;
+the design is `docs/superpowers/specs/2026-09-02-situation-router-design.md`.
+
 The reference that matters is **human play**: `tetris-play` records your own
 games as traces (see below), and the `no-input` / `random` arms bound the floor
 and chance. The **`heuristic`** arm (the weighted one-piece search in

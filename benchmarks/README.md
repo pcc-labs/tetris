@@ -24,6 +24,43 @@ Core columns: `arm`, `race`, `score`, `lines`, `pieces`, `avg holes`,
 **Single-arm files** (`2026-08-25-vm-demo-gemma3.md`) profile one arm in depth:
 one row per run id, and metrics a matrix has no room for (`topped out`, `max h`).
 
+**Validation files** (`2026-09-03-situation-histogram.md`) have no arms at all. They
+record a check the harness depends on — there, the class split of the `routed`
+harness's board classifier over a free heuristic/random corpus, and the stopping
+rule (one class ≥ 90 % would have meant there was nothing to route). They exist so
+a benchmark that leans on a component can point at the evidence the component
+was built on.
+
+## Baseline and goal
+
+The reference arm is `pi/gpt-oss:120b-cloud` under `features`: race **530** at seed 1,
+30-piece cap, `--decision-deadline 15` (+p15). The standing goal is a **local** model
+that matches it; the Anthropic arms are paused. Every 09-03 file is on that screen
+so its rows compare with each other and with `2026-08-22-p15-deadline-screen.md` —
+with the caveat, measured in the router write-up, that the same arm can move ~100
+race between sessions on identical settings, so treat ±100 at one seed as noise.
+
+## Harness comparisons
+
+`2026-09-03-situation-router.md` is the first matrix that varies the **harness** on
+a fixed model set rather than the model on a fixed harness — `legal`, `features`
+and `routed` per model — and its columns carry what that question needs:
+`tok/decision` (output), `in tok`, `%≤15s`. Read `routed` rows against the same
+model's `features` row, never across models. `2026-09-03-local-roster-routed.md`
+extends it to the rest of the local roster with the single question "does the
+shorter prompt get a flatlined model a decision?".
+
+## Index
+
+| file | shape | question |
+|---|---|---|
+| `2026-08-20-local-arms.md` | matrix | first local open-weight rows on the iGPU |
+| `2026-08-22-p15-deadline-screen.md` | matrix | every local model plus Ollama cloud under a 15 s deadline; the ≲300 tok/decision viability bar |
+| `2026-08-25-vm-demo-gemma3.md` | single-arm | one arm profiled to game over inside the VM demo |
+| `2026-09-03-situation-histogram.md` | validation | class split of the situation classifier over 690 free boards |
+| `2026-09-03-situation-router.md` | matrix (harness) | `routed` vs `legal` vs `features` per model; the cloud baseline |
+| `2026-09-03-local-roster-routed.md` | matrix (harness) | gemma4, qwen 27B, gemma 31B, laguna-xs under `features` and `routed` |
+
 ## Piece caps and what a score means
 
 A matrix run uses a fixed cap deliberately — equal work per arm, bounded cost,
