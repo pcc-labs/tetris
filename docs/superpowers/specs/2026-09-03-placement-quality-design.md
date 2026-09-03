@@ -61,12 +61,28 @@ under any reachable board value.
 > bad". That was wrong, and dangerously so. One-ply and two-ply values are on different
 > scales: a searched two-ply value already carries the next piece's height and hole penalty,
 > so it is systematically lower. A one-ply fallback therefore scores the lethal move *above*
-> every survivable one. Measured over 19,816 random high-stack boards, 1,205 had both dead
-> and live options and in 537 of them — 45 % — the oracle's top choice was the move that
-> leaves the next piece nowhere to go. The ceiling arm suicides on exactly the boards that
-> end games, and every model that correctly avoids the killer is labelled with positive
-> regret. Since these rankings are the training labels, a systematically inverted label on
-> near-death boards is the worst failure this design can have.
+> every survivable one.
+>
+> Confirmed directly on a constructed board — columns 0-2 and 7-8 solid, columns 3-6 open
+> only at rows 0-1, column 9 empty, current piece `O`, next piece `O`, where only `(0, 4)`
+> seals the board:
+>
+> | rule | ranking | rank of the lethal move |
+> |---|---|---|
+> | old (one-ply fallback) | `(0,4)` −85.39, `(0,3)` −85.95, `(0,5)` −85.95 | **1st of 3** |
+> | new (`TOP_OUT_VALUE`) | `(0,3)` −85.95, `(0,5)` −85.95, `(0,4)` −1e6 | 3rd of 3 |
+>
+> The consequence is that the ceiling arm suicides on exactly the boards that end games, and
+> every model that correctly avoids the killer is labelled with positive regret. Since these
+> rankings are the training labels, a systematically inverted label on near-death boards is
+> the worst failure this design can have.
+>
+> **How often it bites is not established.** The review reported 537 of 1,205 such boards
+> (45 %) from a random sweep, but three later attempts with different generators found 33,
+> 0 and 0 qualifying boards — a board where a lethal option coexists with a safe one is rare
+> under random generation and highly sensitive to how the stack is built. Do not quote the
+> 45 % figure. The defect is proven by construction; its frequency in real play is unmeasured,
+> and the boards where it bites are by definition the ones that decide games.
 
 The constant must be finite, not `-inf` or `NaN`, so arithmetic downstream stays well
 behaved. It must also be encoded in the *value*, not only in the sort order: `grade`
