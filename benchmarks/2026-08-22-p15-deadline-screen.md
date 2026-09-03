@@ -83,6 +83,38 @@ save a model that won't stop talking. gemma4:latest is the anomaly — fast
 prefill (451 tok/s), fine decode, zero completed calls — consistent with
 unbounded verbosity, unverified.
 
+## Cloud arms against the reference arms
+
+Placing the three cloud rows on the reference scale (same seed, 30-piece cap;
+baselines from the 08-20 note):
+
+| arm | race | score | lines | pieces | %≤15s | tok/decision |
+|---|---|---|---|---|---|---|
+| heuristic (solver ceiling) | 490 | 340 | 8 | 30 | — | — |
+| **gpt-oss:120b-cloud** | **430** | **280** | 2 | 30 | 100 | 593 |
+| random (chance floor) | 140 | 0 | 0 | 28 | — | — |
+| gpt-oss:20b-cloud | 135 | 0 | 0 | 27 | 74 | 554 |
+| gpt-oss:20b (best local) | 90 | 0 | 0 | 18 | 50 | 153 |
+| deepseek-v4-flash:0731-cloud | 70 | 0 | 0 | 14 | 29 | 1,911 |
+| no-input (nobody plays) | 55 | 0 | 0 | 11 | — | — |
+
+- **gpt-oss:120b-cloud lands within 12% of the heuristic solver** (430 vs
+  490) — the solver exhaustively searches placements; the model just reads
+  the same feature table. It is the only model arm ever to clear a line.
+- **gpt-oss:20b-cloud ties the random floor (135 vs 140) for opposite
+  reasons**: random survives 28 pieces on the luck of the legal action
+  space; 20b-cloud survives 27 by answering in time and placing mediocrely.
+  Same race score, different failure mode — the `lines`/`%≤15s` columns
+  tell them apart.
+- **deepseek-v4-flash-cloud scores below the best local arm** and barely
+  above no-input: 1,911 tokens per decision fits no 15-second clock at any
+  serving speed. Cloud hosting moves which term of the latency budget
+  binds; it does not remove the budget.
+
+Net: cloud takes the top two model slots, but the ranking follows the
+latency budget, not the hosting — fast serving promoted the disciplined
+models and did nothing for the verbose one.
+
 ## Verdict on the hypothesis
 
 Tokens per second matter — the A/B proves it causally, not just
