@@ -18,7 +18,7 @@ in score are differences in play rather than luck.
 |---|---|
 | **Model** | `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5`, plus `pi/<ollama-model>` open-weight arms (see below) |
 | **Effort** | `low`, `medium`, `high`, `xhigh`, `max` — Haiku 4.5 rejects the parameter, so its arms run effort-free |
-| **Harness** | `board`, `legal`, `features`, `chat` |
+| **Harness** | `board`, `legal`, `features`, `chat`, `routed` |
 
 The harness is the interesting axis — it is how much of the reasoning is done
 *for* the model before it decides:
@@ -30,6 +30,13 @@ The harness is the interesting axis — it is how much of the reasoning is done
   for each placement. The model gets the heuristic's inputs but must weigh them.
 - **`chat`** — like `board`, but conversation history carries across pieces, so
   the model can pursue a plan (and pays for the growing context).
+- **`routed`** — `legal`, plus the board's *situation* — `TOPPING_OUT`,
+  `TETRIS_READY`, `HOLE_RISK`, `MOUND`, or `FLAT`, in that priority
+  (`situation.py`) — with the one technique it calls for and only the
+  consequence numbers that technique turns on. The general play guidance in the
+  system prompt is replaced by "follow the named technique"; the thresholds are
+  genome fields. Run `uv run tetris-situations` to see the class split over a
+  free corpus (`benchmarks/2026-09-03-situation-histogram.md`).
 
 The reference that matters is **human play**: `tetris-play` records your own
 games as traces (see below), and the `no-input` / `random` arms bound the floor
