@@ -69,10 +69,35 @@ entirely. `--watch` streams any matrix to the viewer.
 
 Every arm reports tokens per decision, seconds per decision, and `tok_s`, so a
 flatlined arm is attributable: slow hardware or an overspent thinking budget.
-Thinking-capable models take `--efforts low|medium|high`; an adaptive
-controller steps effort down when observed latency can't beat the deadline.
+(`tok_s` is end-to-end — output tokens over the pi subprocess's wall clock — so
+it reads low for terse arms and is comparable across pi arms, not with a
+provider's decode rate.)
+
+### Reasoning level
+
+Thinking-capable models take `--efforts off|low|medium|high`, and the level is
+the benchmark's main axis: on this task the level decides who plays at all.
+By default an adaptive controller steps effort down when observed latency
+can't beat the clock; `--fixed-effort` pins each arm to its configured level
+(arms are labeled `+fixed`) so a matrix over `off low medium` measures the
+level, not the controller. `off` is Ollama's `reasoning_effort: "none"`;
+gpt-oss has no off and reasons at its default there.
+
+The flag only reaches an Ollama model that pi knows about. Each tag must be
+listed in `~/.pi/agent/models.json` under the `ollama` provider with
+`"reasoning": true` and `"thinkingLevelMap": {"off": "none"}`; for an
+unlisted tag pi silently drops `--thinking` and the model runs at Ollama's
+default, whatever the arm id says. Every cloud row before 2026-09-03 was
+recorded that way.
 
 ### Local cost
+
+Ollama cloud tags (`pi/<tag>:cloud`, `pi/<tag>-cloud`) proxy through the local
+daemon but bill the account's credits at the "Cost /1M tokens" rate on each
+tag's ollama.com page. `pricing.MODELS` carries those rates, `cost_usd` uses
+them, and `--max-usd` caps them; a cloud tag with no rate on file is refused
+rather than priced at $0. pi reports no usage for a call it kills at the
+deadline, so a flatlined cloud arm's cost is a floor.
 
 `cost_usd` is $0 for a local arm, which is not the same as free. Local runs
 sample host power and report `energy_wh` / `energy_usd`, marginal over an idle
@@ -142,10 +167,40 @@ from a hash of the fitness file path, so every race is reproducible.
 
 ## Benchmarks
 
-The reference arm is `pi/gpt-oss:120b-cloud` under `features`: race 530 at
-seed 1, 30 pieces, 15 s deadline. Race is `score + 5 × pieces survived`. At the
-same settings the baselines are heuristic 490, random 140, no-input 55; 50
-means no decision ever arrived inside the clock.
+Race is `score + 5 × pieces survived`. The baselines on the live screen are
+heuristic 490, random 140, no-input 55; race 50–55 means no decision ever
+arrived before the piece locked.
+
+### Reasoning level × model, live gravity (2026-09-03)
+
+Thirteen Ollama cloud models at `off`, `low` and `medium`, effort pinned, seed
+1, 30 pieces, `features`. Eleven of them play at exactly one level — `off` —
+and top out at any thinking at all; kimi-k3 and gpt-oss:120b also play at
+`low`, the only two served fast enough to afford a few hundred tokens inside
+the ~15 s fall. The cutoff is a latency: under ~3 s per decision every arm
+placed all 30 pieces, over ~9 s every arm topped out.
+
+| arm | race | lines | tok/decision | s/decision | tok/s | $/M in / out | run cost |
+|---|---|---|---|---|---|---|---|
+| nemotron-3-super / off | **730** | 10 | 28 | 2.4 | 11.7 | $0.015 / $0.60 | $0.001 |
+| kimi-k3 / low | 590 | 10 | 268 | 4.5 | 60.2 | $3.00 / $15.00 | $0.226 |
+| gpt-oss:120b / low | 570 | 10 | 107 | 1.4 | 76.6 | $0.15 / $0.60 | $0.006 |
+| gpt-oss:20b / low | 530 | 9 | 134 | 3.0 | 45.3 | $0.07 / $0.30 | $0.003 |
+| deepseek-v4-pro / off | 530 | 9 | 28 | 1.4 | 20.4 | $1.32 / $3.96 | $0.067 |
+| gemma4 31B / off | 530 | 9 | 30 | 1.3 | 22.6 | $0.14 / $0.40 | $0.007 |
+| deepseek-v4-flash / off | 510 | 9 | 31 | 1.2 | 25.3 | $0.44 / $1.32 | $0.022 |
+| same models at `low` / `medium` (except kimi-k3, gpt-oss) | 50–80 | 0 | 460–2,140 | 13–72 | — | — | ≤ $0.03 |
+
+The full 40-arm table with every model's curve is in
+`benchmarks/2026-09-03-live-reasoning-matrix.md`. The whole matrix cost $0.98
+in credits; kimi-k3 was over half of it and did not buy the top score.
+gpt-oss:20b at `low` — 530, 3 s per decision — is the same 21B that runs on
+the iGPU, which makes it the local row to chase.
+
+### Harness × model, bounded pause (2026-09-03, superseded screen)
+
+Earlier the same day, at Ollama's default thinking and with the game frozen
+per piece (`--decision-deadline 15`):
 
 | model | legal | features | routed |
 |---|---|---|---|
@@ -166,6 +221,9 @@ larger model.
 The same arm can move ~100 race between sessions on identical settings, so
 treat ±100 at one seed as noise. Write-ups, one dated file per run day:
 
+- `benchmarks/2026-09-03-live-reasoning-matrix.md` — thirteen cloud models × {off, low, medium} on live gravity, with rates and tok/s
+- `benchmarks/2026-09-03-cloud-thinking.md` — the effort curve on gpt-oss:120b and the roster with thinking off, bounded pause
+- `benchmarks/2026-09-03-cloud-roster.md` — every cloud tag at Ollama's default thinking, bounded pause
 - `benchmarks/2026-09-03-situation-router.md` — `routed` vs `legal` vs `features` per model
 - `benchmarks/2026-09-03-local-roster-routed.md` — the local roster under `routed`
 - `benchmarks/2026-09-03-situation-histogram.md` — class split of the situation classifier

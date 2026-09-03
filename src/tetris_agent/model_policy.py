@@ -43,12 +43,17 @@ class LLMPlacementPolicy:
         exemplar_block: str = "",
         clock=time.monotonic,
         genome: Genome | None = None,
+        fixed_effort: bool = False,
     ):
         self.model = model
         self.harness = harness
         self.spec = spec(model)
         # Haiku 4.5 rejects output_config.effort; its arms are effort-free by construction.
         self.effort = effort if self.spec.supports_effort else None
+        # Pinned: the deadline controller may not step the tier. For a matrix
+        # whose axis *is* the reasoning level, a row that quietly slid to a
+        # lower tier under the clock would be measuring the controller instead.
+        self.fixed_effort = fixed_effort
         self.max_tokens = max_tokens
         self._clock = clock
         # Situation thresholds for the routed harness — the same genome the heuristic plays with.
@@ -171,6 +176,8 @@ class LLMPlacementPolicy:
         """Tiers the deadline controller may pick from, floor first, configured last."""
         if not self.effort:
             return None
+        if self.fixed_effort:
+            return [self.effort]
         return list(EFFORTS[: EFFORTS.index(self.effort) + 1])
 
     def _choose_effort(self) -> str | None:
@@ -224,9 +231,7 @@ class ModelPolicy(LLMPlacementPolicy):
         # grouping is conversation-chained on the capture side, so only the
         # `chat` harness — whose history carries across pieces — lands a whole
         # run as one session; the stateless harnesses land one per piece.
-        self.client = client or anthropic.Anthropic(
-            default_headers={"X-Tapes-Agent-Name": "tetris-agent"}
-        )
+        self.client = client or anthropic.Anthropic(default_headers={"X-Tapes-Agent-Name": "tetris-agent"})
 
     def _call(self, messages: list[dict]) -> dict | None:
         output_config: dict = {"format": {"type": "json_schema", "schema": PLACEMENT_SCHEMA}}
@@ -274,7 +279,9 @@ class ModelPolicy(LLMPlacementPolicy):
         self.usage["input_tokens"] += getattr(usage, "input_tokens", 0) or 0
         self.usage["output_tokens"] += out
         # A subset of output_tokens — never added into cost on top of it.
-        self.usage["thinking_tokens"] += getattr(getattr(usage, "output_tokens_details", None), "thinking_tokens", 0) or 0
+        self.usage["thinking_tokens"] += (
+            getattr(getattr(usage, "output_tokens_details", None), "thinking_tokens", 0) or 0
+        )
         self.usage["cache_read_tokens"] += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.usage["cache_write_tokens"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
         self.last_output_tokens = out

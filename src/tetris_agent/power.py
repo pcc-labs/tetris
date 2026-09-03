@@ -318,12 +318,22 @@ class EnergyMeter:
         from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd
 
         wh = self.marginal_wh()
+        total = self.total_wh()
+        # Draw, not just energy: the figures a write-up quotes ("mean 509 W, max
+        # 608") and the ones that say whether a run sat near a power cap.
+        mean_w = peak_w = None
+        if total is not None:
+            elapsed_h = (self.samples[-1][0] - self.samples[0][0]) / 3600
+            mean_w = round(total / elapsed_h, 1) if elapsed_h > 0 else None
+            peak_w = round(max(w for _, w in self.samples), 1)
         return {
             "energy_wh": wh,
             "energy_usd": None if wh is None else energy_usd(wh, DEFAULT_KWH_PRICE),
             "energy_source": self.reason,
-            "energy_total_wh": None if self.total_wh() is None else round(self.total_wh(), 4),
+            "energy_total_wh": None if total is None else round(total, 4),
             "energy_baseline_w": None if self.baseline_w is None else round(self.baseline_w, 1),
+            "energy_mean_w": mean_w,
+            "energy_peak_w": peak_w,
         }
 
 

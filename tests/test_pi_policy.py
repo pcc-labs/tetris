@@ -368,6 +368,33 @@ def test_pi_effort_ladder_bottoms_out_at_thinking_off():
     assert p.stats()["downshifts"] == 2
 
 
+def test_effort_off_pins_thinking_off_for_every_call():
+    """`--efforts off` is a real arm: thinking disabled from the first piece, no ladder to climb."""
+    p = policy([ok_events(), ok_events()], effort="off", clock=FakeClock([0, 0, 0.1, 0.1, 0.1, 0.2]))
+    p.deadline_s = 1.0
+    p.plan(empty_board(), "O", "I", turn=1)
+    p.plan(empty_board(), "O", "I", turn=2)  # fast EMA would step *up* on a ladder; there is none
+    tiers = [cmd[cmd.index("--thinking") + 1] for cmd in p.runner.calls]
+    assert tiers == ["off", "off"]
+    assert p.name == "pi/gpt-oss:20b/features/off"
+
+
+def test_fixed_effort_never_downshifts_under_deadline_pressure():
+    """Benchmarking reasoning levels needs each arm to *stay* at its level, clock or no clock."""
+    p = policy(
+        [ok_events(), ok_events(), ok_events()],
+        effort="low",
+        fixed_effort=True,
+        clock=FakeClock([0, 0, 5, 5, 5, 10, 10, 10, 15]),
+    )
+    p.deadline_s = 1.0  # every call is 5x over the clock; the ladder would step to off
+    for turn in (1, 2, 3):
+        p.plan(empty_board(), "O", "I", turn=turn)
+    tiers = [cmd[cmd.index("--thinking") + 1] for cmd in p.runner.calls]
+    assert tiers == ["low", "low", "low"]
+    assert p.stats()["downshifts"] == 0
+
+
 def test_pi_timeout_is_capped_by_the_deadline():
     p = policy([ok_events(), ok_events()])
     p.plan(empty_board(), "O", "I", turn=1)  # no deadline: configured timeout
