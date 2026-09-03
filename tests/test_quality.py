@@ -65,10 +65,20 @@ def test_two_ply_differs_from_one_ply_when_the_greedy_move_traps_the_next_piece(
 
 
 def test_a_dead_next_piece_falls_back_to_the_one_ply_value():
-    """No legal reply must not crash, and must not produce a non-finite value."""
+    """No legal reply must not crash, and must not produce a non-finite value.
+
+    Column 9 is left permanently empty so no row is ever fully True (placing
+    a piece can't accidentally clear a line and free up space). Columns 0-2,
+    5-8 are filled solid, blocking every column pair except (3, 4), which is
+    open for exactly the two rows an O needs. That is the only legal
+    placement for the current piece; once it lands there, every column but 9
+    is solid, so the next O has nowhere to go.
+    """
     board = empty_board()
-    board[1:18, :] = True  # only row 0 is free; nothing can follow
-    board[0, 0] = False
+    board[:, 0:3] = True
+    board[2:18, 3:5] = True
+    board[:, 5:9] = True
     ranked = quality.rank_placements(board, "O", "O", ply=2)
+    assert ranked, "the current piece must still have a legal placement"
     for _, value in ranked:
         assert np.isfinite(value)
