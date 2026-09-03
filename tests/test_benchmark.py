@@ -219,6 +219,26 @@ def test_live_arms_carry_a_visible_marker():
     assert both.name == "claude-sonnet-5/features/low+ex+live"
 
 
+def test_fixed_effort_arms_carry_a_visible_marker():
+    """An effort-axis matrix pins each arm's tier; the id must not collide with ladder rows."""
+    from tetris_agent.benchmark import Arm, expand_arms
+
+    arm = Arm(policy="model", model="claude-sonnet-5", harness="features", effort="low", live=True, fixed_effort=True)
+    assert arm.name == "claude-sonnet-5/features/low+live+fixed"
+    arms = expand_arms(["pi/gpt-oss:20b"], ["features"], ["off", "low"], include_control=False, fixed_effort=True)
+    assert [a.name for a in arms] == [
+        "pi/gpt-oss:20b/features/off+live+fixed",
+        "pi/gpt-oss:20b/features/low+live+fixed",
+    ]
+
+
+def test_build_policy_pins_the_effort_ladder_for_fixed_arms():
+    from tetris_agent.benchmark import Arm, build_policy
+
+    arm = Arm(policy="model", model="pi/gpt-oss:20b", harness="features", effort="low", live=True, fixed_effort=True)
+    assert build_policy(arm)._effort_ladder() == ["low"]
+
+
 def test_expand_arms_defaults_model_arms_to_live_and_baselines_not():
     arms = expand_arms(["claude-opus-5"], ["board"], ["low"])
     names = [a.name for a in arms]
@@ -344,9 +364,7 @@ def test_paused_deadline_arms_carry_a_visible_marker():
 
 
 def test_expand_arms_threads_the_deadline_into_model_arms():
-    arms = expand_arms(
-        ["pi/gpt-oss:20b"], ["features"], ["medium"], include_control=False, live=False, deadline_s=15.0
-    )
+    arms = expand_arms(["pi/gpt-oss:20b"], ["features"], ["medium"], include_control=False, live=False, deadline_s=15.0)
     assert [a.deadline_s for a in arms] == [15.0]
     assert arms[0].name.endswith("+p15")
 
@@ -463,8 +481,17 @@ def test_render_table_includes_the_deadline_columns():
 
 def test_decision_deadline_flag_implies_paused_and_names_the_arms(capsys):
     rc = main(
-        ["--models", "pi/gemma3", "--harnesses", "board", "--decision-deadline", "15",
-         "--no-control", "--estimate", "--skip-preflight"]
+        [
+            "--models",
+            "pi/gemma3",
+            "--harnesses",
+            "board",
+            "--decision-deadline",
+            "15",
+            "--no-control",
+            "--estimate",
+            "--skip-preflight",
+        ]
     )
     out = capsys.readouterr().out
     assert rc == 0

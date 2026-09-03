@@ -196,10 +196,19 @@ class PiPolicy(LLMPlacementPolicy):
         clock=time.monotonic,
         hard_deadline: bool = False,
         genome=None,
+        fixed_effort: bool = False,
     ):
         if not model.startswith(PI_PREFIX):
             raise ValueError(f"PiPolicy needs a {PI_PREFIX}* model id, got {model!r}")
-        super().__init__(model, harness, effort, exemplar_block=exemplar_block, clock=clock, genome=genome)
+        super().__init__(
+            model,
+            harness,
+            effort,
+            exemplar_block=exemplar_block,
+            clock=clock,
+            genome=genome,
+            fixed_effort=fixed_effort,
+        )
         self.ollama_model = model.removeprefix(PI_PREFIX)
         self.runner = runner or _run_pi
         self.timeout_s = timeout_s
@@ -213,8 +222,14 @@ class PiPolicy(LLMPlacementPolicy):
     def _effort_ladder(self) -> list[str] | None:
         # pi's --thinking accepts "off", so the deadline controller can turn
         # thinking entirely off — the true floor for a local model.
+        if self.effort == "off":
+            # Configured off: a one-rung ladder, so the controller can never
+            # step a model *into* thinking when the clock looks roomy.
+            return ["off"]
         ladder = super()._effort_ladder()
-        return ["off"] + ladder if ladder else None
+        if ladder is None or self.fixed_effort:
+            return ladder
+        return ["off"] + ladder
 
     def _build_cmd(self, prompt: str, effort: str | None = None) -> list[str]:
         cmd = [

@@ -33,12 +33,23 @@ was built on.
 
 ## Baseline and goal
 
-The reference arm is `pi/gpt-oss:120b-cloud` under `features`: race **530** at seed 1,
-30-piece cap, `--decision-deadline 15` (+p15). The standing goal is a **local** model
-that matches it; the Anthropic arms are paused. Every 09-03 file is on that screen
-so its rows compare with each other and with `2026-08-22-p15-deadline-screen.md` —
-with the caveat, measured in the router write-up, that the same arm can move ~100
-race between sessions on identical settings, so treat ±100 at one seed as noise.
+The reference screen since 2026-09-03 is **live gravity with the effort pinned**:
+seed 1, 30-piece cap, `features`, `--efforts off low medium --fixed-effort`, arms
+labeled `+live+fixed`. Its top row is `pi/nemotron-3-super:cloud/features/off` at race
+**730**; gpt-oss:120b `low` is 570 and gpt-oss:20b `low` 530. The standing goal is a
+**local** model that matches those; the Anthropic arms are paused.
+
+The earlier screen — `--decision-deadline 15` (+p15), the game frozen per piece — is
+where the 08-22 and the first 09-03 files live, with `pi/gpt-oss:120b-cloud/features`
+at 530 as its reference. It hides speed under 15 s, so its rows rank reasoning quality
+only, and every cloud row on it ran at Ollama's default thinking (the flag was not
+reaching the model). Compare rows within a screen, never across.
+
+Effort matrices carry two columns the harness matrices did not need: the tag's
+published rate (`$/M in / out`, from `pricing.MODELS`) and `tok/s` (end-to-end, output
+tokens over pi's wall clock — low for terse arms by construction). The same arm can
+move ~100 race between sessions on identical settings, so treat ±100 at one seed as
+noise.
 
 ## Harness comparisons
 
@@ -60,6 +71,9 @@ shorter prompt get a flatlined model a decision?".
 | `2026-09-03-situation-histogram.md` | validation | class split of the situation classifier over 690 free boards |
 | `2026-09-03-situation-router.md` | matrix (harness) | `routed` vs `legal` vs `features` per model; the cloud baseline |
 | `2026-09-03-local-roster-routed.md` | matrix (harness) | gemma4, qwen 27B, gemma 31B, laguna-xs under `features` and `routed` |
+| `2026-09-03-cloud-roster.md` | matrix | every Ollama cloud tag (14 arms) under the 15 s screen at Ollama's default thinking; gemma4 31B plays when served fast, ten frontier tags never answer |
+| `2026-09-03-cloud-thinking.md` | matrix (effort) | gpt-oss:120b at off/low/medium/high, then the roster with thinking off; `low` 570 and deepseek-v4-pro `off` 590 are the new tops, seven flatliners become players |
+| `2026-09-03-live-reasoning-matrix.md` | matrix (effort × model, live) | thirteen cloud models × {off, low, medium} on live gravity with effort pinned; eleven play only at off, nemotron-3-super `off` 730 leads, gpt-oss:20b `low` 530, deepseek-v4-flash `off` 510 |
 
 ## Piece caps and what a score means
 

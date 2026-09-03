@@ -132,6 +132,23 @@ def test_stats_prices_marginal_watt_hours():
     assert stats["energy_baseline_w"] == 40.0
 
 
+def test_stats_reports_mean_and_peak_watts():
+    """The figures a write-up quotes ("mean 509 W, max 608") — draw, not just energy."""
+    meter = power.EnergyMeter(source=lambda: 100.0)
+    # An hour ramping 100 -> 140 -> 100 W integrates to 120 Wh, so the mean draw is 120 W.
+    meter.samples = [(0.0, 100.0), (1800.0, 140.0), (3600.0, 100.0)]
+    meter.baseline_w = 40.0
+    stats = meter.stats()
+    assert stats["energy_mean_w"] == pytest.approx(120.0)
+    assert stats["energy_peak_w"] == 140.0
+
+
+def test_unmeasured_run_has_no_mean_or_peak():
+    stats = power.EnergyMeter(detect=_unavailable).stats()
+    assert stats["energy_mean_w"] is None
+    assert stats["energy_peak_w"] is None
+
+
 def test_baseline_is_the_mean_of_idle_readings():
     # The clock is read once to set the deadline, then once per iteration before
     # each draw, so a 4 s window over a 1 s tick admits exactly three readings.

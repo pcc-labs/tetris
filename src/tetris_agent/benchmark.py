@@ -34,6 +34,9 @@ class Arm:
     # Bounded pause: the game freezes once per piece while the model thinks,
     # but a decision slower than this is discarded and the piece falls.
     deadline_s: float | None = None
+    # The deadline controller may not step the effort tier: the row measures
+    # the configured level, not what the ladder settled on.
+    fixed_effort: bool = False
 
     @property
     def name(self) -> str:
@@ -47,6 +50,8 @@ class Arm:
             suffix += "+live"
         elif self.deadline_s is not None:
             suffix += f"+p{self.deadline_s:g}"
+        if self.fixed_effort:
+            suffix += "+fixed"
         return "/".join(parts) + suffix
 
 
@@ -77,6 +82,7 @@ def expand_arms(
     exemplars: bool = False,
     live: bool = True,
     deadline_s: float | None = None,
+    fixed_effort: bool = False,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -99,6 +105,7 @@ def expand_arms(
             exemplars=exemplars,
             live=live,
             deadline_s=None if live else deadline_s,
+            fixed_effort=fixed_effort,
         )
         if arm.name not in seen:
             seen.add(arm.name)
@@ -128,11 +135,17 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
             # Bounded pause: the deadline is the whole budget, kill at the mark.
             hard_deadline=arm.deadline_s is not None and not arm.live,
             genome=genome,
+            fixed_effort=arm.fixed_effort,
         )
     from tetris_agent.model_policy import ModelPolicy
 
     return ModelPolicy(
-        model=arm.model, harness=arm.harness, effort=arm.effort, exemplar_block=block, genome=genome
+        model=arm.model,
+        harness=arm.harness,
+        effort=arm.effort,
+        exemplar_block=block,
+        genome=genome,
+        fixed_effort=arm.fixed_effort,
     )
 
 
@@ -302,12 +315,8 @@ def summarize(results: list[ArmResult]) -> list[dict]:
                 "timeouts": sum(r.policy_stats.get("timeouts", 0) for r in runs),
                 "pct_le_10s": pct_le(10_000),
                 "pct_le_15s": pct_le(15_000),
-                "latency_ms": round(
-                    sum(r.policy_stats.get("latency_ms_mean", 0) for r in runs) / max(len(runs), 1), 1
-                ),
-                "tok_s": round(
-                    sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1
-                ),
+                "latency_ms": round(sum(r.policy_stats.get("latency_ms_mean", 0) for r in runs) / max(len(runs), 1), 1),
+                "tok_s": round(sum(r.policy_stats.get("tokens_per_second", 0) for r in runs) / max(len(runs), 1), 1),
                 "cost_usd": round(sum(r.cost for r in runs), 4),
                 **_energy_cells(runs),
             }
@@ -334,9 +343,22 @@ def render_table(rows: list[dict]) -> str:
     if not rows:
         return "(no results)"
     cols = [
-        "arm", "race_score", "score", "lines", "pieces", "avg_holes",
-        "illegal", "late", "timeouts", "pct_le_10s", "pct_le_15s",
-        "latency_ms", "tok_s", "cost_usd", "energy_wh", "energy_usd",
+        "arm",
+        "race_score",
+        "score",
+        "lines",
+        "pieces",
+        "avg_holes",
+        "illegal",
+        "late",
+        "timeouts",
+        "pct_le_10s",
+        "pct_le_15s",
+        "latency_ms",
+        "tok_s",
+        "cost_usd",
+        "energy_wh",
+        "energy_usd",
     ]
     widths = {c: max(len(c), max(len(str(r[c])) for r in rows)) for c in cols}
     header = "  ".join(c.ljust(widths[c]) for c in cols)
@@ -398,9 +420,7 @@ def main(argv=None) -> int:
         action="store_true",
         help="stream every arm to the viewer's LIVE tab (uv run tetris-viewer) as it plays",
     )
-    parser.add_argument(
-        "--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --watch"
-    )
+    parser.add_argument("--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --watch")
     parser.add_argument(
         "--level",
         type=int,
@@ -417,6 +437,11 @@ def main(argv=None) -> int:
         default=None,
         metavar="RUNS_DIR",
         help="inject verified human traces from RUNS_DIR (default runs/); model arms are labeled +ex",
+    )
+    parser.add_argument(
+        "--fixed-effort",
+        action="store_true",
+        help="pin each arm to its configured effort (no deadline downshifts); arms are labeled +fixed",
     )
     args = parser.parse_args(argv)
 
@@ -452,6 +477,7 @@ def main(argv=None) -> int:
         exemplars=bool(args.exemplars),
         live=not args.paused,
         deadline_s=args.decision_deadline,
+        fixed_effort=args.fixed_effort,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
@@ -484,14 +510,24 @@ def main(argv=None) -> int:
 
     def runner(arm, seed, rom_path, max_pieces):
         return run_arm(
-            arm, seed, rom_path, max_pieces,
-            exemplar_block=exemplar_block, level=args.level, streamer=streamer,
+            arm,
+            seed,
+            rom_path,
+            max_pieces,
+            exemplar_block=exemplar_block,
+            level=args.level,
+            streamer=streamer,
             measure_power=not args.no_power,
         )
 
     results = run_matrix(
-        arms, args.seeds, args.rom, max_pieces=args.max_pieces, max_usd=args.max_usd,
-        runner=runner, on_result=progress,
+        arms,
+        args.seeds,
+        args.rom,
+        max_pieces=args.max_pieces,
+        max_usd=args.max_usd,
+        runner=runner,
+        on_result=progress,
     )
     rows = summarize(results)
     print("\n" + render_table(rows))
