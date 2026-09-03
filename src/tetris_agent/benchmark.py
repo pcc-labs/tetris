@@ -15,10 +15,12 @@ from pathlib import Path
 
 from tetris_agent.fitness import race_score
 from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_pi, spec
+from tetris_agent.recorder import RunRecorder
 
 logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("data/benchmarks")
+RUNS_DIR = Path("runs")
 DEFAULT_SEEDS = (0x00,)
 DEFAULT_MAX_PIECES = 30
 
@@ -185,6 +187,7 @@ def run_arm(
     level: int = 0,
     streamer=None,
     measure_power: bool = False,
+    grade_quality: bool = True,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
@@ -203,6 +206,16 @@ def run_arm(
         from tetris_agent.power import EnergyMeter
 
         meter = EnergyMeter()
+    # Placement grading, and the trace it writes. Events only: frames are the
+    # expensive part of a recording and nothing here needs them.
+    grader = recorder = None
+    if grade_quality:
+        import functools
+
+        from tetris_agent.quality import DEFAULT_PLY, grade
+
+        grader = functools.partial(grade, genome=Genome.from_params(genome_params or {}), ply=DEFAULT_PLY)
+        recorder = RunRecorder(RUNS_DIR, label=arm.name)
     # Live arms need the wall-clock pacer. Paused arms run uncapped — unless a
     # viewer is watching, in which case real time is the point.
     paced = arm.live or streamer is not None
@@ -216,13 +229,15 @@ def run_arm(
             emu,
             genome=Genome.from_params(genome_params or {}),
             collector=EventCollector(publisher),
-            recorder=None,
+            recorder=recorder,
             max_pieces=max_pieces,
             policy=policy,
             frame_sinks=frame_sinks,
             decision_deadline_s=arm.deadline_s,
             session_meta=_arm_meta(arm, seed, max_pieces),
             meter=meter,
+            grader=grader,
+            record_frames=False,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
@@ -482,6 +497,11 @@ def main(argv=None) -> int:
         action="store_true",
         help="pin each arm to its configured effort (no deadline downshifts); arms are labeled +fixed",
     )
+    parser.add_argument(
+        "--no-quality",
+        action="store_true",
+        help="skip placement grading (no regret columns, no run traces)",
+    )
     args = parser.parse_args(argv)
 
     if args.decision_deadline is not None and not args.paused:
@@ -558,6 +578,7 @@ def main(argv=None) -> int:
             level=args.level,
             streamer=streamer,
             measure_power=not args.no_power,
+            grade_quality=not args.no_quality,
         )
 
     results = run_matrix(

@@ -547,3 +547,15 @@ def test_quality_columns_appear_in_the_table():
     )
     table = render_table(rows)
     assert "regret" in table and "top1" in table and "top3" in table
+
+
+def test_grading_is_on_by_default(monkeypatch):
+    import inspect
+
+    from tetris_agent.benchmark import run_arm
+
+    assert inspect.signature(run_arm).parameters["grade_quality"].default is True
+
+
+def test_no_quality_is_an_accepted_flag():
+    assert main(["--models", "claude-opus-5", "--estimate", "--max-pieces", "5", "--no-quality"]) == 0

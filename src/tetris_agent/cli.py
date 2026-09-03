@@ -35,6 +35,7 @@ class Config:
     effort: str
     exemplars: str | None
     no_power: bool
+    no_quality: bool
 
 
 def build_config(argv=None) -> Config:
@@ -79,6 +80,11 @@ def build_config(argv=None) -> Config:
         "--no-power",
         action="store_true",
         help="skip host power sampling for local arms (their energy cost then reports n/a)",
+    )
+    parser.add_argument(
+        "--no-quality",
+        action="store_true",
+        help="skip placement grading (no regret columns, no run traces)",
     )
     return Config(**vars(parser.parse_args(argv)))
 
@@ -151,11 +157,27 @@ def agent_main(argv=None) -> int:
 
         meter = EnergyMeter()
 
+    # Placement grading against the two-ply oracle, on by default like the benchmark.
+    grader = None
+    if not cfg.no_quality:
+        import functools
+
+        from tetris_agent.quality import DEFAULT_PLY, grade
+
+        grader = functools.partial(grade, genome=genome, ply=DEFAULT_PLY)
+
     emu = Emulator(cfg.rom, headless=cfg.window == "null", speed=1 if cfg.live else 0)
     try:
         agent = _agent_class(cfg.live)(
-            emu, genome, EventCollector(publisher), recorder=recorder, max_pieces=cfg.max_pieces,
-            frame_sinks=frame_sinks, policy=build_policy(cfg), meter=meter,
+            emu,
+            genome,
+            EventCollector(publisher),
+            recorder=recorder,
+            max_pieces=cfg.max_pieces,
+            frame_sinks=frame_sinks,
+            policy=build_policy(cfg),
+            meter=meter,
+            grader=grader,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())

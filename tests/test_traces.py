@@ -30,9 +30,7 @@ def write_run(runs_dir, run_id, policy, pieces):
     for turn, (piece, nxt, rot, col, lines, feats) in enumerate(pieces, start=1):
         events.append(_envelope("piece_spawn", turn, {"piece": piece, "next_piece": nxt}))
         events.append(_envelope("placement_decision", turn, {"rotation": rot, "col": col, "score": 0.0}))
-        events.append(
-            _envelope("piece_locked", turn, {"lines_delta": lines, "misexec": 0, "score": 0, **feats})
-        )
+        events.append(_envelope("piece_locked", turn, {"lines_delta": lines, "misexec": 0, "score": 0, **feats}))
     (run_dir / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
     return run_dir
 
@@ -155,6 +153,32 @@ def test_load_exemplar_block_builds_from_verified_traces(tmp_path):
     block = load_exemplar_block(tmp_path)
     assert "How a strong human placed pieces" in block
     assert "rotation=0 col=0" in block
+
+
+def test_mine_run_ignores_graded_events(tmp_path):
+    """A graded run and the same run without grades mine to identical exemplars."""
+    pieces = [("O", "O", 0, 0, 0, O_AT_0), ("O", "I", 0, 2, 0, THEN_O_AT_2)]
+    plain = write_run(tmp_path, "20260903-000001-aaaaaa", "human", pieces)
+    graded = write_run(tmp_path, "20260903-000002-bbbbbb", "human", pieces)
+
+    # Interleave a grade after every lock, exactly as the game loops now do.
+    events = [json.loads(line) for line in (graded / "events.jsonl").read_text().splitlines()]
+    with_grades = []
+    for event in events:
+        with_grades.append(event)
+        if event["event_type"] == "piece_locked":
+            with_grades.append(
+                _envelope("placement_graded", event["turn"], {"rank": 1, "regret": 0.0, "regret_norm": 0.0})
+            )
+    (graded / "events.jsonl").write_text("\n".join(json.dumps(e) for e in with_grades) + "\n")
+
+    def summary(run_dir):
+        # Compared field by field: an Exemplar holds a numpy board, so == on the
+        # dataclass raises rather than answering.
+        return [(e.piece, e.next_piece, e.rotation, e.col, e.lines_delta, e.holes) for e in mine_run(run_dir)]
+
+    assert summary(plain), "the fixture produced no exemplars, so this proves nothing"
+    assert summary(graded) == summary(plain)
 
 
 def test_late_decisions_are_not_mined(tmp_path):
