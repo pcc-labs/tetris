@@ -5,6 +5,8 @@ fakes, so every timing scenario (fast, slow, never) is scripted — no real
 threads, no sleeps.
 """
 
+from types import SimpleNamespace
+
 from test_manual import CapturingPublisher, FakeEmulator, falling_at, state_with
 
 from tetris_agent.controller import ExecResult
@@ -92,7 +94,7 @@ def install_controller(monkeypatch):
     return executed
 
 
-def make_agent(emu, policy, pub, threads, max_pieces=2):
+def make_agent(emu, policy, pub, threads, max_pieces=2, grader=None):
     return LiveTetrisAgent(
         emu,
         Genome(),
@@ -100,6 +102,7 @@ def make_agent(emu, policy, pub, threads, max_pieces=2):
         max_pieces=max_pieces,
         policy=policy,
         thread_factory=threads,
+        grader=grader,
     )
 
 
@@ -352,9 +355,7 @@ def test_live_agent_places_pieces_on_the_real_rom(rom_path):
     pub = CapturingPublisher()
     emu = Emulator(rom_path)
     try:
-        agent = LiveTetrisAgent(
-            emu, Genome(), EventCollector(pub), max_pieces=3, policy=HeuristicPolicy(Genome())
-        )
+        agent = LiveTetrisAgent(emu, Genome(), EventCollector(pub), max_pieces=3, policy=HeuristicPolicy(Genome()))
         fitness = agent.run(timer_div=0)
     finally:
         emu.stop()
@@ -412,3 +413,65 @@ def test_decision_event_carries_the_calls_output_tokens(monkeypatch):
 
     decision = pub.of_type("placement_decision")[0]
     assert decision["data"]["tokens"] == 42
+
+
+def _fake_grader(calls):
+    def grade(board, piece, next_piece, placement):
+        calls.append((piece, next_piece, placement.rotation, placement.col))
+        return SimpleNamespace(regret_norm=0.25, rank=2, to_dict=lambda: {"rank": 2, "regret_norm": 0.25})
+
+    return grade
+
+
+def test_live_grades_an_executed_decision_after_the_lock(monkeypatch):
+    """Order must read spawn -> decision -> locked -> graded."""
+    timeline = [
+        state_with(falling_at(0, 3, name="J")),
+        state_with(None, filled=4),
+    ]
+    emu = LiveFakeEmulator(timeline)
+    install_live(monkeypatch, emu)
+    install_controller(monkeypatch)
+    pub = CapturingPublisher()
+    calls = []
+    agent = make_agent(
+        emu,
+        ScriptedPolicy([Placement(0, 0, 0.0)]),
+        pub,
+        ManualThreads(immediate=True),
+        max_pieces=1,
+        grader=_fake_grader(calls),
+    )
+    agent.run(timer_div=0)
+
+    kinds = [e["event_type"] for e in pub.events]
+    assert "placement_graded" in kinds
+    assert kinds.index("piece_locked") < kinds.index("placement_graded")
+    # The board and next piece handed to the grader are the ones the decision saw.
+    assert calls == [("J", "I", 0, 0)]
+
+
+def test_a_piece_that_locks_without_a_decision_is_not_graded(monkeypatch):
+    """The worker never answered, so gravity placed the piece and there is
+    nothing to grade."""
+    timeline = [
+        state_with(falling_at(0, 3, name="J")),
+        state_with(None, filled=4),
+    ]
+    emu = LiveFakeEmulator(timeline)
+    install_live(monkeypatch, emu)
+    install_controller(monkeypatch)
+    pub = CapturingPublisher()
+    calls = []
+    agent = make_agent(
+        emu,
+        ScriptedPolicy([Placement(0, 0, 0.0)]),
+        pub,
+        ManualThreads(immediate=False),  # the decision is never delivered
+        max_pieces=1,
+        grader=_fake_grader(calls),
+    )
+    agent.run(timer_div=0)
+
+    assert calls == []
+    assert "placement_graded" not in [e["event_type"] for e in pub.events]

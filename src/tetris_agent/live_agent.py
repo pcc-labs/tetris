@@ -36,9 +36,11 @@ _EXEC_HEADROOM_S = 2.0
 class _Pending:
     """One in-flight decision, tagged with the turn/piece it was asked for."""
 
-    def __init__(self, turn: int, piece: str):
+    def __init__(self, turn: int, piece: str, board=None, next_piece: str | None = None):
         self.turn = turn
         self.piece = piece
+        self.board = board
+        self.next_piece = next_piece
         self.submitted_at = time.monotonic()
         self._q: queue.Queue = queue.Queue(maxsize=1)
 
@@ -60,6 +62,7 @@ class LiveTetrisAgent(TetrisAgent):
         super().__init__(*args, **kwargs)
         self.thread_factory = thread_factory
         self.live_stats = {"late": 0, "worker_errors": 0, "in_flight_at_end": False}
+        self._last_decision = None
 
     def _play(self, timer_div: int | None = None, level: int | None = 0) -> dict:
         self._level = level
@@ -107,6 +110,13 @@ class LiveTetrisAgent(TetrisAgent):
                 f = features(post.board)
                 tracker.on_lock(f, exec_result.misexec)
                 self.collector.locked(self.emu.lines - lines_before, f, exec_result.misexec, score=self.emu.score)
+                decided, self._last_decision = self._last_decision, None
+                if self.grader is not None and decided is not None and not getattr(self.policy, "last_fallback", False):
+                    board, piece, next_piece, placement = decided
+                    g = self.grader(board, piece, next_piece, placement)
+                    if g is not None:
+                        tracker.on_grade(g)
+                        self.collector.graded(g)
                 self._capture_frame()
                 placed += 1
                 if exec_result.replanned:
@@ -181,6 +191,7 @@ class LiveTetrisAgent(TetrisAgent):
                     tokens=getattr(self.policy, "last_output_tokens", None),
                 )
                 self._capture_frame()
+                self._last_decision = (pending.board, pending.piece, pending.next_piece, placement)
                 return None, "executed", controller.execute(placement)
             if not self.emu.tick(2):
                 return pending, "closed", None
@@ -204,9 +215,9 @@ class LiveTetrisAgent(TetrisAgent):
 
     def _submit(self, state) -> _Pending:
         self.policy.deadline_s = self._deadline_s(state)
-        pending = _Pending(turn=self.collector.turn, piece=state.falling.name)
         board = state.board.copy()
         piece, next_piece, turn = state.falling.name, state.next_piece, self.collector.turn
+        pending = _Pending(turn=turn, piece=piece, board=board, next_piece=next_piece)
 
         def work():
             try:
