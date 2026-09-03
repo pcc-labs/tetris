@@ -275,11 +275,14 @@ def test_a_placement_outside_the_legal_set_is_not_graded():
 
 
 def test_the_grade_records_the_weights_it_used():
+    """The healer mutates the weights, so a label is only reproducible with them."""
     genome = Genome(w_holes=-0.9)
-    g = quality.grade(rough_board(), "T", "I", Placement(rotation=0, col=0, score=0.0), genome=genome)
-    if g is not None:
-        assert g.genome["w_holes"] == -0.9
-        assert g.ply == 2
+    board = rough_board()
+    # Grade a placement taken from the ranking, so it is legal by construction.
+    chosen = placement_of(quality.rank_placements(board, "T", "I", genome)[0])
+    g = quality.grade(board, "T", "I", chosen, genome=genome)
+    assert g.genome["w_holes"] == -0.9
+    assert g.ply == 2
 
 
 def test_to_dict_is_json_safe_and_carries_the_ranking():
@@ -1027,13 +1030,27 @@ and in `plan`, replace the fallback block with:
             choice = legal[0]
 ```
 
-In `src/tetris_agent/agent.py`, add the constructor parameter beside `meter`:
+In `src/tetris_agent/agent.py`, add two constructor parameters beside `meter`:
 
 ```python
         grader=None,
+        record_frames: bool = True,
 ```
 
-store it as `self.grader = grader`, and in the play loop, immediately after the existing `self.collector.locked(...)` call:
+Store the grader as `self.grader = grader`. The second parameter exists because the
+constructor currently appends `recorder.record_frame` to `frame_sinks` unconditionally, and
+benchmark arms want a recorder without paying for a screenshot three times per piece.
+Change that block to honour it, leaving the default behaviour of `tetris-agent` and
+`tetris-play` unchanged:
+
+```python
+        if recorder is not None:
+            collector.publisher = _Tee(collector.publisher, _RecorderSink(recorder))
+            if record_frames:
+                self.frame_sinks.append(recorder.record_frame)
+```
+
+Then, in the play loop, immediately after the existing `self.collector.locked(...)` call:
 
 ```python
             # After the lock, so grading costs the gap between pieces and never
@@ -1312,7 +1329,10 @@ build the grader and the per-arm recorder inside `run_arm`, next to where the me
         recorder = RunRecorder(RUNS_DIR, label=arm.name)
 ```
 
-pass `grader=grader` and `recorder=recorder` into the agent construction alongside `meter=meter`, and add the argument-parser flag:
+pass `grader=grader`, `recorder=recorder` and `record_frames=False` into the agent
+construction alongside `meter=meter`. Frames are the expensive part of a recording and
+nothing reads them for a benchmark arm; `record_frames` is the parameter Task 6 added to
+the constructor for exactly this. Then add the argument-parser flag:
 
 ```python
     parser.add_argument(
