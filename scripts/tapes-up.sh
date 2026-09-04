@@ -16,7 +16,13 @@ if ! command -v tapes >/dev/null 2>&1; then
   exit 1
 fi
 
-# Storage is the `tapes local up` Postgres container (see ~/.tapes/config.toml).
+# Storage is the `tapes local up` Postgres container. Every `tapes serve` below
+# must be handed the DSN explicitly: it does not read TAPES_PG_DSN itself, and
+# ~/.tapes/config.toml ships an empty [storage] section, so without --postgres
+# each one exits immediately with "empty postgres dsn" — into a backgrounded
+# shell where nobody sees it, leaving a stack that looks up and captures nothing.
+PG_DSN="${TAPES_PG_DSN:-postgres://tapes:tapes@127.0.0.1:5432/tapes?sslmode=disable}"
+
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
   echo "postgres (localhost:5432) is not reachable — run 'tapes local up' first (needs Docker)" >&2
   exit 1
@@ -31,14 +37,25 @@ done
 
 trap 'kill 0' EXIT INT TERM
 
-tapes serve api --listen "127.0.0.1:${API_PORT}" &
-tapes serve derive-worker &
+tapes serve api --listen "127.0.0.1:${API_PORT}" --postgres "$PG_DSN" &
+tapes serve derive-worker --postgres "$PG_DSN" &
 tapes serve proxy --provider anthropic --upstream https://api.anthropic.com \
-  --listen "127.0.0.1:${ANTHROPIC_PORT}" --project "$PROJECT" &
+  --listen "127.0.0.1:${ANTHROPIC_PORT}" --project "$PROJECT" --postgres "$PG_DSN" &
 tapes serve proxy --provider openai --upstream http://127.0.0.1:11434 \
-  --listen "127.0.0.1:${OLLAMA_PORT}" --project "$PROJECT" &
+  --listen "127.0.0.1:${OLLAMA_PORT}" --project "$PROJECT" --postgres "$PG_DSN" &
 
 sleep 1
+
+# A proxy that died on startup leaves the port closed. Say so here rather than
+# letting a whole benchmark run land nowhere.
+for probe in "$ANTHROPIC_PORT:anthropic" "$OLLAMA_PORT:ollama"; do
+  port="${probe%%:*}"
+  if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+    echo "tapes ${probe##*:} proxy is not listening on ${port} — it exited on startup." >&2
+    echo "Run it in the foreground to see why: tapes serve proxy --provider ${probe##*:} --postgres \"\$PG_DSN\"" >&2
+    exit 1
+  fi
+done
 cat <<EOF
 
 tapes capture stack is up (project: ${PROJECT}). In your benchmark shell:
