@@ -44,18 +44,23 @@ tapes serve proxy --provider anthropic --upstream https://api.anthropic.com \
 tapes serve proxy --provider openai --upstream http://127.0.0.1:11434 \
   --listen "127.0.0.1:${OLLAMA_PORT}" --project "$PROJECT" --postgres "$PG_DSN" &
 
-sleep 1
-
 # A proxy that died on startup leaves the port closed. Say so here rather than
-# letting a whole benchmark run land nowhere.
-for probe in "$ANTHROPIC_PORT:anthropic" "$OLLAMA_PORT:ollama"; do
-  port="${probe%%:*}"
-  if ! nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
-    echo "tapes ${probe##*:} proxy is not listening on ${port} — it exited on startup." >&2
-    echo "Run it in the foreground to see why: tapes serve proxy --provider ${probe##*:} --postgres \"\$PG_DSN\"" >&2
-    exit 1
-  fi
-done
+# letting a whole benchmark run land nowhere. Each proxy connects to Postgres
+# before it binds, so give it up to 10 s rather than one probe at t=1 s -- a
+# single early probe was killing healthy stacks on a loaded box.
+wait_for_port() {  # port label provider
+  local port=$1 label=$2 provider=$3 i
+  for i in $(seq 1 20); do
+    nc -z 127.0.0.1 "$port" >/dev/null 2>&1 && return 0
+    sleep 0.5
+  done
+  echo "tapes ${label} proxy is not listening on ${port} after 10 s — it exited on startup." >&2
+  echo "Run it in the foreground to see why:" >&2
+  echo "  tapes serve proxy --provider ${provider} --listen 127.0.0.1:${port} --postgres '${PG_DSN}'" >&2
+  return 1
+}
+wait_for_port "$ANTHROPIC_PORT" anthropic anthropic || exit 1
+wait_for_port "$OLLAMA_PORT" ollama openai || exit 1
 cat <<EOF
 
 tapes capture stack is up (project: ${PROJECT}). In your benchmark shell:
