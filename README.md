@@ -328,6 +328,20 @@ Events (`tetris.game.v1`) are appended to
 land in `runs/<id>/` with `events.jsonl`, `summary.json`, and PNG frames at each
 spawn/lock, so the viewer's REPLAY tab plays them anywhere without the emulator.
 
+A `placement_graded` event also carries `board`: the pre-decision board the
+grade was computed on, 18 rows of 10 characters, `.` empty and `#` settled, row
+0 first — the same encoding `situation_corpus.py` reads. Late, timed-out and
+fallback decisions are never graded, so they never carry one. The field is
+optional and additive: an event built without a board is byte-identical to
+before it existed.
+
+That field is what makes a run trainable. The distillation pipeline that
+consumes it — corpus assembly, LoRA fine-tuning of a small local student
+against a stronger local teacher, and the gate that decides whether the result
+beat its own baseline on the live screen — lives in the sibling
+`empirical-evidence` repo, not here. This repo stays the game, the benchmark
+and the grader.
+
 ## Development
 
 ```bash
