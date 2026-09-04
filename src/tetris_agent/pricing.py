@@ -25,6 +25,9 @@ class ModelSpec:
 # `pi/<ollama-model>` arms run through the pi agent against local Ollama: free,
 # and supports_effort mirrors whether the model accepts pi's --thinking flag.
 PI_PREFIX = "pi/"
+# `ollama create gemma4-e4b-tetris:<corpus_id>` is how a distilled student lands
+# on this box (empirical-evidence scripts/deploy_gguf.sh and tetris_package_job).
+TUNED_PREFIX = "pi/gemma4-e4b-tetris:"
 
 MODELS: dict[str, ModelSpec] = {
     "claude-fable-5": ModelSpec("claude-fable-5", 10.0, 50.0, True, 512),
@@ -110,6 +113,12 @@ def spec(model_id: str) -> ModelSpec:
             f"no rate on file for {model_id!r} — copy the 'Cost /1M tokens' figures from "
             f"https://ollama.com/library/{tag} into pricing.MODELS"
         )
+    if model_id.startswith(TUNED_PREFIX):
+        # A distilled E4B student (empirical-evidence's tetris_package_job) is
+        # gemma4 under a corpus-id tag, one tag per corpus. It takes --thinking
+        # like its base, and the tier-2 gate refuses an arm that ran effort-free
+        # -- so the whole family is listed here rather than one line per corpus.
+        return ModelSpec(model_id, 0.0, 0.0, True, 0)
     if is_pi(model_id):
         # Unlisted local model: free, and effort-free so we never send
         # --thinking to a model we don't know accepts it.
