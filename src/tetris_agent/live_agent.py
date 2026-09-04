@@ -111,8 +111,8 @@ class LiveTetrisAgent(TetrisAgent):
                 tracker.on_lock(f, exec_result.misexec)
                 self.collector.locked(self.emu.lines - lines_before, f, exec_result.misexec, score=self.emu.score)
                 decided, self._last_decision = self._last_decision, None
-                if self.grader is not None and decided is not None and not getattr(self.policy, "last_fallback", False):
-                    board, piece, next_piece, placement = decided
+                if self.grader is not None and decided is not None and not decided[4]:
+                    board, piece, next_piece, placement, _fallback = decided
                     g = self.grader(board, piece, next_piece, placement)
                     if g is not None:
                         tracker.on_grade(g)
@@ -181,7 +181,7 @@ class LiveTetrisAgent(TetrisAgent):
                     # too late, and Controller.execute must not see it.
                     self._discard_late(result, pending, latency)
                     return None, "locked", None
-                placement, reason = self._resolve(result, s)
+                placement, reason, fallback = self._resolve(result, s)
                 if placement is None:
                     return None, "stop", None
                 self.collector.decision(
@@ -191,7 +191,7 @@ class LiveTetrisAgent(TetrisAgent):
                     tokens=getattr(self.policy, "last_output_tokens", None),
                 )
                 self._capture_frame()
-                self._last_decision = (pending.board, pending.piece, pending.next_piece, placement)
+                self._last_decision = (pending.board, pending.piece, pending.next_piece, placement, fallback)
                 return None, "executed", controller.execute(placement)
             if not self.emu.tick(2):
                 return pending, "closed", None
@@ -269,14 +269,17 @@ class LiveTetrisAgent(TetrisAgent):
                 turn=pending.turn,
             )
 
-    def _resolve(self, result: tuple, state) -> tuple[Placement | None, str]:
-        """Worker outcome → (placement, reason); (None, _) means top-out."""
+    def _resolve(self, result: tuple, state) -> tuple[Placement | None, str, bool]:
+        """Worker outcome → (placement, reason, fallback); (None, _, _) means
+        top-out. `fallback` marks a placement the policy never chose — the
+        worker died and the live loop substituted the first legal move — so
+        the caller can keep it out of the grader."""
         kind, value = result
         if kind == "ok":
-            return value, getattr(self.policy, "last_reason", "")
+            return value, getattr(self.policy, "last_reason", ""), getattr(self.policy, "last_fallback", False)
         self.live_stats["worker_errors"] += 1
         logger.warning("decision worker failed: %s", value)
         moves = legal_moves(state.board, state.falling.name)
         if not moves:
-            return None, ""
-        return Placement(rotation=moves[0][0], col=moves[0][1], score=0.0), "worker error fallback"
+            return None, "", False
+        return Placement(rotation=moves[0][0], col=moves[0][1], score=0.0), "worker error fallback", True

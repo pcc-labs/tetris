@@ -294,6 +294,34 @@ def test_worker_exception_falls_back_to_first_legal_move(monkeypatch):
     assert fitness["pieces_placed"] == 1
 
 
+def test_worker_exception_fallback_is_never_graded(monkeypatch):
+    """A worker-error fallback was never actually chosen by the model, so it
+    must not become a training row: no placement_graded event, and it does
+    not count toward graded_decisions."""
+    timeline = [state_with(falling_at(0, 3, name="J"))] * 2 + [state_with(None, filled=4)]
+    emu = LiveFakeEmulator(timeline)
+    install_live(monkeypatch, emu)
+    executed = install_controller(monkeypatch)
+    pub = CapturingPublisher()
+    calls = []
+
+    fitness = make_agent(
+        emu,
+        RaisingPolicy([]),
+        pub,
+        ManualThreads(immediate=True),
+        max_pieces=1,
+        grader=_fake_grader(calls),
+    ).run()
+
+    assert len(executed) == 1
+    decision = pub.of_type("placement_decision")[0]
+    assert decision["data"]["reason"] == "worker error fallback"
+    assert "placement_graded" not in [e["event_type"] for e in pub.events]
+    assert calls == []
+    assert fitness["graded_decisions"] == 0
+
+
 def test_game_over_with_a_decision_still_in_flight_ends_cleanly(monkeypatch):
     timeline = [state_with(falling_at(0, 3, name="J"))] * 2 + [state_with(None, filled=4, game_over=True)]
     emu = LiveFakeEmulator(timeline)
