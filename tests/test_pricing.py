@@ -40,3 +40,15 @@ def test_local_roster_tags_accept_the_thinking_flag():
 
 def test_unlisted_local_pi_model_is_still_free():
     assert cost_usd("pi/brand-new:7b", 1_000_000, 1_000_000) == 0.0
+
+
+def test_distilled_student_tags_accept_the_thinking_flag_for_any_corpus():
+    """`gemma4-e4b-tetris:<corpus_id>` is minted per corpus by empirical-evidence's
+    package step. The tier-2 gate compares it to gemma4:latest at effort=off, and
+    refuses an arm that ran effort-free -- so every corpus id must resolve with
+    supports_effort=True without a pricing.MODELS edit per training run."""
+    tag = "pi/gemma4-e4b-tetris:20260904-8eccf25ae599"
+    assert spec(tag).supports_effort is True
+    assert cost_usd(tag, 1_000_000, 1_000_000) == 0.0
+    # The tuned family is still local: a cloud-suffixed tag is not silently free.
+    assert spec("pi/gemma4-e4b-tetris:x").supports_effort is True
