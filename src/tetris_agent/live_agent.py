@@ -116,7 +116,7 @@ class LiveTetrisAgent(TetrisAgent):
                     g = self.grader(board, piece, next_piece, placement)
                     if g is not None:
                         tracker.on_grade(g)
-                        self.collector.graded(g)
+                        self.collector.graded(g, board=board)
                 self._capture_frame()
                 placed += 1
                 if exec_result.replanned:

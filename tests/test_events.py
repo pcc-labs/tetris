@@ -131,3 +131,60 @@ def test_collector_publishes_a_graded_event():
     collector = EventCollector(Sink())
     collector.graded(quality.grade(board, "O", "I", Placement(rotation=0, col=7, score=0.0)))
     assert [e["event_type"] for e in published] == ["placement_graded"]
+
+
+def test_graded_event_carries_the_board_when_given():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.events import build_graded_event
+    from tetris_agent.policy import Placement
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :6] = True
+    g = quality.grade(board, "O", "I", Placement(rotation=0, col=7, score=0.0))
+
+    event = build_graded_event(turn=4, grade=g, board=board)
+    rows = event["data"]["board"]
+    assert len(rows) == 18 and all(len(r) == 10 for r in rows)
+    assert rows[0] == ".........."
+    assert rows[15] == "######...."
+    # Round-trips through the encoding situation_corpus already reads.
+    back = np.array([[ch == "#" for ch in row] for row in rows], dtype=bool)
+    assert (back == board).all()
+
+
+def test_graded_event_without_a_board_is_unchanged():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.events import build_graded_event
+    from tetris_agent.policy import Placement
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[15:18, :6] = True
+    g = quality.grade(board, "O", "I", Placement(rotation=0, col=7, score=0.0))
+    event = build_graded_event(turn=4, grade=g)
+    assert "board" not in event["data"]
+    assert set(event["data"]) == set(g.to_dict())
+
+
+def test_collector_passes_the_board_through():
+    import numpy as np
+
+    from tetris_agent import quality
+    from tetris_agent.events import EventCollector
+    from tetris_agent.policy import Placement
+
+    published = []
+
+    class Sink:
+        def publish(self, event):
+            published.append(event)
+
+    board = np.zeros((18, 10), dtype=bool)
+    board[17, :] = True
+    board[17, 3] = False
+    collector = EventCollector(Sink())
+    collector.graded(quality.grade(board, "O", "I", Placement(rotation=0, col=0, score=0.0)), board=board)
+    assert published[0]["data"]["board"][17] == "###.######"

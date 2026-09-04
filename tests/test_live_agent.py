@@ -486,3 +486,23 @@ def test_a_piece_that_locks_without_a_decision_is_not_graded(monkeypatch):
 
     assert calls == []
     assert "placement_graded" not in [e["event_type"] for e in pub.events]
+
+
+def test_live_graded_event_carries_the_board_the_grader_saw(monkeypatch):
+    timeline = [
+        state_with(falling_at(0, 3, name="J")),
+        state_with(None, filled=4),
+    ]
+    emu = LiveFakeEmulator(timeline)
+    install_live(monkeypatch, emu)
+    install_controller(monkeypatch)
+    pub = CapturingPublisher()
+    calls = []
+    agent = make_agent(
+        emu, ScriptedPolicy([Placement(0, 0, 0.0)]), pub, ManualThreads(immediate=True),
+        max_pieces=1, grader=_fake_grader(calls),
+    )
+    agent.run(timer_div=0)
+    graded = pub.of_type("placement_graded")[0]
+    expected = ["".join("#" if c else "." for c in row) for row in calls[0][0]]
+    assert graded["data"]["board"] == expected

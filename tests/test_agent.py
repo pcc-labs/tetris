@@ -323,7 +323,7 @@ def _fake_grader(calls, clock=None, grade_s=7, regret=0.25, rank=2):
     cost was charged to the recorded decision latency."""
 
     def grade(board, piece, next_piece, placement):
-        calls.append((piece, placement.rotation, placement.col))
+        calls.append((board, piece, placement.rotation, placement.col))
         if clock is not None:
             clock.advance(grade_s)
         return SimpleNamespace(
@@ -395,3 +395,14 @@ def test_a_fallback_placement_is_not_graded(monkeypatch):
     fitness = agent.run(timer_div=0)
     assert calls == []
     assert fitness["graded_decisions"] == 0
+
+
+def test_the_graded_event_carries_the_pre_decision_board(monkeypatch):
+    calls = []
+    agent, _, publisher = _paused_agent_fixtures(monkeypatch, think_s=3, deadline_s=15.0, grader=_fake_grader(calls))
+    agent.run(timer_div=0)
+    graded = next(e for e in publisher.events if e["event_type"] == "placement_graded")
+    rows = graded["data"]["board"]
+    assert len(rows) == 18 and all(len(r) == 10 and set(r) <= {".", "#"} for r in rows)
+    expected = ["".join("#" if c else "." for c in row) for row in calls[0][0]]
+    assert rows == expected

@@ -53,14 +53,21 @@ def build_locked_event(turn: int, lines_delta: int, features: Features, misexec:
     )
 
 
-def build_graded_event(turn: int, grade) -> dict:
+def build_graded_event(turn: int, grade, board=None) -> dict:
     """A decision scored against the lookahead oracle (see quality.py).
 
     Separate from `placement_decision` because that event is published before
     execution, so the viewer can render the think-freeze, and the grade does not
     exist until the piece has locked.
+
+    `board` is the pre-decision board the grade was computed on, encoded the way
+    situation_corpus.py reads it (`.` empty, `#` settled, row 0 first). Optional,
+    so an event built without it is byte-identical to before the field existed.
     """
-    return _envelope("placement_graded", turn, grade.to_dict())
+    data = grade.to_dict()
+    if board is not None:
+        data["board"] = ["".join("#" if cell else "." for cell in row) for row in board]
+    return _envelope("placement_graded", turn, data)
 
 
 def build_stuck_event(turn: int, streak: int, detail: str) -> dict:
@@ -107,5 +114,5 @@ class EventCollector:
     def game_over(self, fitness: dict) -> None:
         self.publisher.publish(build_game_over_event(self.turn, fitness))
 
-    def graded(self, grade, turn: int | None = None) -> None:
-        self.publisher.publish(build_graded_event(self.turn if turn is None else turn, grade))
+    def graded(self, grade, turn: int | None = None, board=None) -> None:
+        self.publisher.publish(build_graded_event(self.turn if turn is None else turn, grade, board=board))
