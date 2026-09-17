@@ -35,7 +35,16 @@ component can point at the evidence the component was built on.
 
 ## Baseline and goal
 
-The reference screen since 2026-09-03 is **live gravity with the effort pinned**:
+**Since 2026-09-17 the reference screen is 150 pieces, three seeds** — live gravity, `features`,
+effort pinned, seeds 1 2 3, means reported. The 30-piece cap turned out to be saturated (the
+two-ply oracle, the heuristic and the best model arms sit within ~70 race points of each other
+there) and single-seed rows are not reproducible. On the new screen the two-ply oracle races
+8,030, the heuristic 6,903, `pi/gpt-oss:120b-cloud` `low` 7,898, and the best local arm,
+`pi/gpt-oss:20b` `low`, 1,927 ([`2026-09-17-jev-long-games.md`](2026-09-17-jev-long-games.md)).
+The 30-piece leaders below do not hold their places on it. Compare rows within a screen, never
+across.
+
+The 30-piece reference screen from 2026-09-03 was **live gravity with the effort pinned**:
 seed 1, 30-piece cap, `features`, `--efforts off low medium --fixed-effort`, arms
 labeled `+live+fixed`. Its top row is `pi/nemotron-3-super:cloud/features/off` at race
 **730**; gpt-oss:120b `low` is 570 and gpt-oss:20b `low` 530. The local reference on the
@@ -96,6 +105,7 @@ shorter prompt get a flatlined model a decision?".
 | [`2026-09-03-cloud-thinking.md`](2026-09-03-cloud-thinking.md) | matrix (effort) | gpt-oss:120b at off/low/medium/high, then the roster with thinking off; `low` 570 and deepseek-v4-pro `off` 590 are the new tops, seven flatliners become players |
 | [`2026-09-03-local-reasoning-matrix.md`](2026-09-03-local-reasoning-matrix.md) | matrix (effort × model, live, local) | seven local models × {off, low, medium} with power sampled; gemma4:26b `off` 530 is local parity with the cloud 530 cluster |
 | [`2026-09-03-live-reasoning-matrix.md`](2026-09-03-live-reasoning-matrix.md) | matrix (effort × model, live) | thirteen cloud models × {off, low, medium} on live gravity with effort pinned; eleven play only at off, nemotron-3-super `off` 730 leads, gpt-oss:20b `low` 530, deepseek-v4-flash `off` 510 |
+| [`2026-09-17-jev-long-games.md`](2026-09-17-jev-long-games.md) | matrix (150 pieces, 3 seeds, live) | the cap moves 30 → 150; gpt-oss:120b `low` 7,898 plays at the oracle's race, the 30-piece leaders collapse, Jev alone tops out every game, and Jev as a top-5 pre-filter is +9 % inside the noise |
 
 ## Piece caps and what a score means
 

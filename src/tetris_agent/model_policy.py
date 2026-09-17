@@ -92,6 +92,10 @@ class LLMPlacementPolicy:
         self._decide_started: float | None = None
         self._ema_latency_s: float | None = None
         self._tier_index: int | None = None
+        # Optional pre-filter on the legal set (see jev_policy.JevShortlist):
+        # the model then chooses among what it returns. Its time is part of
+        # this arm's latency and its bill part of this arm's cost.
+        self.shortlist = None
 
     # ---- the Policy contract -------------------------------------------------
 
@@ -99,6 +103,10 @@ class LLMPlacementPolicy:
         legal = legal_placements(board, piece)
         if not legal:
             return None
+        if self.shortlist is not None:
+            started = self._clock()
+            legal = self.shortlist(board, piece, next_piece, turn, legal)
+            self.usage["latency_ms_total"] += (self._clock() - started) * 1000
 
         situation = classify(board, piece, next_piece, self.genome) if self.harness == "routed" else None
         self.last_situation = situation
@@ -133,7 +141,9 @@ class LLMPlacementPolicy:
                 u["output_tokens"],
                 u["cache_read_tokens"],
                 u["cache_write_tokens"],
-            ),
+            )
+            + (self.shortlist.cost_usd() if self.shortlist is not None else 0.0),
+            **(self.shortlist.stats() if self.shortlist is not None else {}),
         }
 
     # ---- internals -----------------------------------------------------------

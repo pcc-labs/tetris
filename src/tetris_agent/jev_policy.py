@@ -174,3 +174,54 @@ class JevPolicy:
         if runner_up:
             text += f", next {runner_up[0]} p={runner_up[1]:.2f}"
         return text
+
+
+class JevShortlist:
+    """Jev as a pre-filter for an LLM arm: the k placements Jev rates highest.
+
+    The with/without-Jev question. Alone, Jev is fast and never illegal but
+    tops out early; an LLM alone reads a prompt listing every legal placement.
+    Here Jev spends ~0.3 s cutting the list to k and the LLM chooses among
+    those — a shorter prompt, and the worst options are gone before the model
+    can pick them. Any failure returns the full list, so the LLM arm degrades
+    to what it was without Jev rather than to a fallback placement.
+    """
+
+    def __init__(self, k: int = 5, model: str = jev.DEFAULT_MODEL, ask=jev.ask):
+        self.k = k
+        self.model = model
+        self._judge = JevPolicy(model=model, harness="features", ask=ask)
+        self.usage = {"calls": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0}
+
+    def __call__(self, board, piece: str, next_piece: str, turn: int, legal: list[LegalPlacement]):
+        if len(legal) <= self.k:
+            return legal
+        judge = self._judge
+        question = {"placement": {"type": "choice", "instructions": INSTRUCTIONS, "criteria": judge._criteria(legal)}}
+        try:
+            result = judge._ask(judge._state(board, piece, next_piece, turn, legal), question)
+        except Exception as err:
+            self.usage["errors"] += 1
+            logger.warning("jev shortlist: %s", err)
+            return legal
+        self.usage["calls"] += 1
+        usage = result.get("usage") or {}
+        self.usage["input_tokens"] += int(usage.get("input_tokens", 0))
+        self.usage["output_tokens"] += int(usage.get("output_tokens", 0))
+        probabilities = ((result.get("answers") or {}).get("placement") or {}).get("probabilities") or {}
+        if not probabilities:
+            self.usage["errors"] += 1
+            return legal
+        ranked = sorted(legal, key=lambda p: probabilities.get(option_key(p), 0.0), reverse=True)
+        return ranked[: self.k]
+
+    def cost_usd(self) -> float:
+        return cost_usd(self.model, self.usage["input_tokens"], self.usage["output_tokens"])
+
+    def stats(self) -> dict:
+        return {
+            "jev_shortlist_k": self.k,
+            "jev_calls": self.usage["calls"],
+            "jev_errors": self.usage["errors"],
+            "jev_cost_usd": self.cost_usd(),
+        }

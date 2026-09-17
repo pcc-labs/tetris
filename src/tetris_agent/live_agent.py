@@ -61,7 +61,7 @@ class LiveTetrisAgent(TetrisAgent):
     def __init__(self, *args, thread_factory=threading.Thread, **kwargs):
         super().__init__(*args, **kwargs)
         self.thread_factory = thread_factory
-        self.live_stats = {"late": 0, "worker_errors": 0, "in_flight_at_end": False}
+        self.live_stats = {"late": 0, "worker_errors": 0, "in_flight_at_end": False, "time_limit_hit": False}
         self._last_decision = None
 
     def _play(self, timer_div: int | None = None, level: int | None = 0) -> dict:
@@ -86,7 +86,11 @@ class LiveTetrisAgent(TetrisAgent):
 
         pending: _Pending | None = None
         placed = 0
+        started = self._clock()
         while placed < self.max_pieces:
+            if self.max_seconds is not None and self._clock() - started >= self.max_seconds:
+                self.live_stats["time_limit_hit"] = True
+                break
             state, closed = self._await_spawn()
             if closed:
                 break

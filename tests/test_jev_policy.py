@@ -87,3 +87,33 @@ def test_benchmark_routes_jev_models_to_the_jev_policy():
     assert isinstance(policy, JevPolicy)
     assert policy.name == "jev-latest/features"
     assert Arm(policy="model", model="jev-latest", harness="features", exemplars=True).name == "jev-latest/features+ex"
+
+
+def test_shortlist_keeps_jevs_top_k_and_falls_back_to_everything_on_error():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevShortlist, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "T")
+    favoured = [option_key(p) for p in legal[-3:]]
+
+    def ask(state, questions):
+        assert set(questions["placement"]["criteria"]) == {option_key(p) for p in legal}
+        return {
+            "answers": {"placement": {"choice": favoured[0], "probabilities": {k: 0.3 for k in favoured}}},
+            "usage": {"input_tokens": 100, "output_tokens": 0},
+        }
+
+    shortlist = JevShortlist(k=3, ask=ask)
+    assert {option_key(p) for p in shortlist(board, "T", "I", 1, legal)} == set(favoured)
+    assert shortlist.stats()["jev_calls"] == 1 and shortlist.cost_usd() > 0
+
+    def broken(state, questions):
+        raise RuntimeError("down")
+
+    failing = JevShortlist(k=3, ask=broken)
+    assert failing(board, "T", "I", 1, legal) == legal
+    assert failing.stats()["jev_errors"] == 1

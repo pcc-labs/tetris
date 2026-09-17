@@ -17,5 +17,6 @@ dist/
 *.gb
 .superpowers/
 
-# local secrets (Daytona / TypeSafe keys)
+# local secrets (Daytona / TypeSafe keys), and editor save files of them
 .env
+.env.*
