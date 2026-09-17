@@ -62,12 +62,11 @@ Readings:
   is not Jev's: a model that plays above it keeps playing above it with Jev in front.
 - **Late pieces mostly vanish.** 6–11 per arm alone; 0–4 with Jev. Seconds per move roughly
   halve (gemma4:26b 2.5 → 1.2, gpt-oss:20b 3.5 → 2.4).
-- **A ceiling near 6,000.** The with-Jev scores cluster just under the heuristic's 6,903, and
-  Jev ranks the same per-option features the heuristic scores. Whether the ceiling is Jev's or
-  the model's is the open question: the gpt-oss:120b rerun (7,898 alone) and a
-  heuristic-built shortlist are the two checks that answer it.
+- **The ~6,000 cluster is where Jev lifts a weak model to.** It sits just under the heuristic's
+  6,903, and Jev ranks the same per-option features the heuristic scores. Whether a
+  heuristic-built shortlist would lift them the same way is still untested.
 - **Three seeds.** Per-game spread is still wide (qwen3.5 with Jev: 2,560 / 7,000 / 6,760).
-  The direction is consistent across 12 models; the sizes are not precise.
+  The direction is consistent across 14 models; the sizes are not precise.
 
 ## Two rows that were thrown out, and why
 
