@@ -40,21 +40,26 @@ quarter of moves at regret 0.047 (better than any model arm), p < 0.5 half of th
 | glm-4.7-flash-32k `off` | **local** | 193 | 752 | 28 → 60 | 61 % |
 | nemotron-3.5-lightning-32k `off` | **local** | 88 | 583 | 18 → 51 | 57 % |
 | gemma4 e4b (`latest`) `off` | **local** | 147 | 432 | 24 → 45 | 67 % |
-| gpt-oss:120b `low` | cloud | 7,898 | rerun pending | 125 → ? | |
-| gpt-oss:20b `low` | cloud | 3,328 | rerun pending | 72 → ? | |
+| gpt-oss:120b `low` | cloud | 7,898 | 7,957 | 125 → 146 | 66 % |
+| gpt-oss:20b `low` | cloud | 3,328 | 3,627 | 72 → 115 | 47 % |
 
 References on the same seeds: two-ply oracle 8,030 (never loses), heuristic 6,903 (never loses).
 
 Readings:
 
-- **Every pair improved — 12 of 12, by 1.5× to 20×.** No model got worse with Jev.
+- **Every pair improved — 14 of 14, by 1.01× to 20×.** No model got worse with Jev.
 - **Local reaches cloud.** The three best local arms with Jev (5,768–5,952) sit with the three
-  best cloud arms with Jev (6,060–6,222). Alone, local was 4–5× behind cloud. Two of three
+  best cloud arms with Jev (6,060–6,222); only gpt-oss:120b (7,957) is clearly above. Alone, local was 4–5× behind cloud. Two of three
   games reach piece 150 for each of them; alone none did.
 - **The model still plays.** In the strong pairs the model makes ~⅔ of the moves, Jev about a
   quarter on confidence, and the out-of-time rescue fires on under 10 %. In the weak pairs the
   rescue fires on 20–35 % — the stack is tall because the model's own picks are poor — and
   those are Jev's unsure moves, so the arm improves but still loses.
+- **The best model gains nothing on score but stops losing early.** gpt-oss:120b `low`, the
+  one model already above the heuristic alone, goes 7,898 → 7,957 with Jev — a tie — while its
+  survival goes 125 → 146 pieces, holes 2.2 → 2.7, regret 0.115 → 0.083, and it has the best
+  per-game score of the day (9,100). Jev takes 34 % of its moves. So the ~6,000 ceiling below
+  is not Jev's: a model that plays above it keeps playing above it with Jev in front.
 - **Late pieces mostly vanish.** 6–11 per arm alone; 0–4 with Jev. Seconds per move roughly
   halve (gemma4:26b 2.5 → 1.2, gpt-oss:20b 3.5 → 2.4).
 - **A ceiling near 6,000.** The with-Jev scores cluster just under the heuristic's 6,903, and
@@ -71,7 +76,8 @@ failed and slow calls, and once Jev took a move the estimate never refreshed. On
 call latched Jev on: gpt-oss:120b-cloud with Jev played 61 % of moves by Jev (race 5,283, holes
 7.6), gpt-oss:20b-cloud 99 % (2,100) — Jev alone, which loses. Fixed the same evening (median
 of the last 7 *successful* answers, and no rescue until three are in); both pairs rerun with
-the fix, results to be appended here.
+the fix: gpt-oss:120b 7,957 (model 66 % of moves, rescue 5 %), gpt-oss:20b-cloud 3,627
+(model 47 %, rescue 37 % — a slow cloud tag, 8 late pieces even with Jev). Both in the table.
 
 ## Spend
 

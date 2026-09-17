@@ -106,7 +106,7 @@ shorter prompt get a flatlined model a decision?".
 | [`2026-09-03-local-reasoning-matrix.md`](2026-09-03-local-reasoning-matrix.md) | matrix (effort × model, live, local) | seven local models × {off, low, medium} with power sampled; gemma4:26b `off` 530 is local parity with the cloud 530 cluster |
 | [`2026-09-03-live-reasoning-matrix.md`](2026-09-03-live-reasoning-matrix.md) | matrix (effort × model, live) | thirteen cloud models × {off, low, medium} on live gravity with effort pinned; eleven play only at off, nemotron-3-super `off` 730 leads, gpt-oss:20b `low` 530, deepseek-v4-flash `off` 510 |
 | [`2026-09-17-jev-long-games.md`](2026-09-17-jev-long-games.md) | matrix (150 pieces, 3 seeds, live) | the cap moves 30 → 150; gpt-oss:120b `low` 7,898 plays at the oracle's race, the 30-piece leaders collapse, Jev alone tops out every game, and Jev as a top-5 pre-filter is +9 % inside the noise |
-| [`2026-09-17-jev-with-every-model.md`](2026-09-17-jev-with-every-model.md) | matrix (alone vs with Jev, 150 pieces, 3 seeds) | Jev as shortlist + confidence gate + out-of-time rescue in front of 14 models; 12 of 12 finished pairs improve, the best local arms (5,800–5,950) reach the best cloud arms (6,000–6,200) |
+| [`2026-09-17-jev-with-every-model.md`](2026-09-17-jev-with-every-model.md) | matrix (alone vs with Jev, 150 pieces, 3 seeds) | Jev as shortlist + confidence gate + out-of-time rescue in front of 14 models; 14 of 14 pairs improve, the best local arms (5,800–5,950) reach the best cloud arms (6,000–6,200) |
 
 ## Piece caps and what a score means
 
