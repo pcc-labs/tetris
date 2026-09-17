@@ -192,6 +192,7 @@ class JevShortlist:
         self.model = model
         self._judge = JevPolicy(model=model, harness="features", ask=ask)
         self.usage = {"calls": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0}
+        self.last_error = ""
 
     def __call__(self, board, piece: str, next_piece: str, turn: int, legal: list[LegalPlacement]):
         if len(legal) <= self.k:
@@ -202,6 +203,7 @@ class JevShortlist:
             result = judge._ask(judge._state(board, piece, next_piece, turn, legal), question)
         except Exception as err:
             self.usage["errors"] += 1
+            self.last_error = str(err)[:200]
             logger.warning("jev shortlist: %s", err)
             return legal
         self.usage["calls"] += 1
@@ -211,6 +213,7 @@ class JevShortlist:
         probabilities = ((result.get("answers") or {}).get("placement") or {}).get("probabilities") or {}
         if not probabilities:
             self.usage["errors"] += 1
+            self.last_error = "answer carried no probabilities"
             return legal
         ranked = sorted(legal, key=lambda p: probabilities.get(option_key(p), 0.0), reverse=True)
         return ranked[: self.k]
@@ -224,4 +227,5 @@ class JevShortlist:
             "jev_calls": self.usage["calls"],
             "jev_errors": self.usage["errors"],
             "jev_cost_usd": self.cost_usd(),
+            "jev_last_error": self.last_error,
         }

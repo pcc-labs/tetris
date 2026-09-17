@@ -96,6 +96,15 @@ the 9 % race difference — inside the noise. The regret drop (0.115 → 0.097, 
 speed-up here: latency rose 0.85 s, more than Jev's own call, and `late` went 1 → 4. (The
 iGPU was serving a local arm at the time; some of that may be host contention.)
 
+**Caveat found after the run:** Jev's shortlist call failed on 68 of the 364 decisions (0, 10
+and 58 by seed), and on those the model chose from the full list, as designed. So about one
+move in five was not Jev + model at all, and the pair above under-tests the idea. A 25-call
+burst afterwards reproduced no failures; `jev_last_error` is now recorded in the arm's stats
+so the next run names the cause.
+
+`+jev5` reads "Jev shortlist, top 5": of the roughly 10–35 legal placements for a piece, the
+model sees only the five Jev rates highest.
+
 The local pairs — `gemma4:26b` `off` and `gpt-oss:20b` `low`, each `+jev5` — were still
 running when this file was written; they go in a follow-up file. They are the better test:
 the local arms are the ones that are slow, prefill-bound and losing pieces to gravity.
