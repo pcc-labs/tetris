@@ -37,6 +37,18 @@ INSTRUCTIONS = (
 )
 
 
+# The `survive` harness asks the way TypeSafe's Subway Surfers demo does: not
+# "which of these 30?" — one distribution spread thin across every option — but
+# one yes/no per option, "does the run survive this?", all in the same call and
+# judged independently. The placement played is the one with the highest yes.
+SURVIVE_INSTRUCTIONS = (
+    "Game Boy Tetris, 10 columns by 18 rows. The state shows the board and the piece to place. "
+    "Consider only this one placement: {description}. "
+    "After it, is the board still healthy — low, flat, no new covered holes, room for the next piece — "
+    "so that the game keeps going for a long time?"
+)
+
+
 def option_key(p: LegalPlacement) -> str:
     return f"r{p.rotation}c{p.col}"
 
@@ -92,7 +104,15 @@ class JevPolicy:
             return None
         by_key = {option_key(p): p for p in legal}
         state = self._state(board, piece, next_piece, turn, legal)
-        question = {"placement": {"type": "choice", "instructions": INSTRUCTIONS, "criteria": self._criteria(legal)}}
+        if self.harness == "survive":
+            question = {
+                key: {"type": "noul", "instructions": SURVIVE_INSTRUCTIONS.format(description=describe(p))}
+                for key, p in by_key.items()
+            }
+        else:
+            question = {
+                "placement": {"type": "choice", "instructions": INSTRUCTIONS, "criteria": self._criteria(legal)}
+            }
 
         started = self._clock()
         try:
@@ -113,8 +133,13 @@ class JevPolicy:
         self.usage["output_tokens"] += int(usage.get("output_tokens", 0))
         self.last_output_tokens = int(usage.get("output_tokens", 0))
 
-        answer = (result.get("answers") or {}).get("placement") or {}
-        probabilities = answer.get("probabilities") or {}
+        answers = result.get("answers") or {}
+        if self.harness == "survive":
+            probabilities = {k: float(a.get("noul", 0.0)) for k, a in answers.items() if k in by_key}
+            answer = {"choice": max(probabilities, key=probabilities.get) if probabilities else None}
+        else:
+            answer = answers.get("placement") or {}
+            probabilities = answer.get("probabilities") or {}
         choice = by_key.get(answer.get("choice"))
         if choice is None:
             # Cannot happen when the API honours its contract; counted so a
@@ -187,15 +212,24 @@ class JevShortlist:
     to what it was without Jev rather than to a fallback placement.
     """
 
-    def __init__(self, k: int = 5, model: str = jev.DEFAULT_MODEL, ask=jev.ask):
+    def __init__(self, k: int = 5, model: str = jev.DEFAULT_MODEL, ask=jev.ask, gate: float | None = None):
         self.k = k
+        # Confidence gate: when Jev puts at least this much probability on one
+        # placement it is returned alone, and the LLM is never asked — Jev's
+        # 0.3 s stands in for the model's seconds. On 640 graded Jev decisions
+        # (2026-09-17) p >= 0.7 covered a quarter of moves at regret 0.047,
+        # against 0.19 where p < 0.5, so the probability does carry the signal.
+        self.gate = gate
+        self.decided = 0
+        self.rushed = 0  # of `decided`: played because the clock ran out, not on confidence
         self.model = model
         self._judge = JevPolicy(model=model, harness="features", ask=ask)
         self.usage = {"calls": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0}
         self.last_error = ""
 
-    def __call__(self, board, piece: str, next_piece: str, turn: int, legal: list[LegalPlacement]):
-        if len(legal) <= self.k:
+    def __call__(self, board, piece: str, next_piece: str, turn: int, legal: list[LegalPlacement], decide=False):
+        """`decide`: the caller is out of time, so with a gate set Jev's top pick is played whatever its odds."""
+        if len(legal) <= (1 if self.gate is not None else self.k):
             return legal
         judge = self._judge
         question = {"placement": {"type": "choice", "instructions": INSTRUCTIONS, "criteria": judge._criteria(legal)}}
@@ -216,6 +250,10 @@ class JevShortlist:
             self.last_error = "answer carried no probabilities"
             return legal
         ranked = sorted(legal, key=lambda p: probabilities.get(option_key(p), 0.0), reverse=True)
+        if self.gate is not None and (decide or probabilities.get(option_key(ranked[0]), 0.0) >= self.gate):
+            self.decided += 1
+            self.rushed += bool(decide)
+            return ranked[:1]
         return ranked[: self.k]
 
     def cost_usd(self) -> float:
@@ -226,6 +264,9 @@ class JevShortlist:
             "jev_shortlist_k": self.k,
             "jev_calls": self.usage["calls"],
             "jev_errors": self.usage["errors"],
+            "jev_gate": self.gate,
+            "jev_decided": self.decided,
+            "jev_rushed": self.rushed,
             "jev_cost_usd": self.cost_usd(),
             "jev_last_error": self.last_error,
         }

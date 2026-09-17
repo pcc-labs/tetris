@@ -117,3 +117,59 @@ def test_shortlist_keeps_jevs_top_k_and_falls_back_to_everything_on_error():
     failing = JevShortlist(k=3, ask=broken)
     assert failing(board, "T", "I", 1, legal) == legal
     assert failing.stats()["jev_errors"] == 1
+
+
+def test_gate_lets_a_confident_jev_decide_and_leaves_the_rest_to_the_model():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevShortlist, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "T")
+    top = option_key(legal[4])
+
+    def answering(p):
+        def ask(state, questions):
+            return {"answers": {"placement": {"choice": top, "probabilities": {top: p}}}, "usage": {}}
+
+        return ask
+
+    sure = JevShortlist(k=3, gate=0.7, ask=answering(0.8))
+    assert [option_key(x) for x in sure(board, "T", "I", 1, legal)] == [top]
+    assert sure.stats()["jev_decided"] == 1
+
+    unsure = JevShortlist(k=3, gate=0.7, ask=answering(0.4))
+    assert len(unsure(board, "T", "I", 1, legal)) == 3
+    assert unsure.stats()["jev_decided"] == 0
+
+    # Out of time, the same unsure Jev still decides: a fast move beats a late one.
+    assert [option_key(x) for x in unsure(board, "T", "I", 2, legal, decide=True)] == [top]
+    assert unsure.stats()["jev_rushed"] == 1
+
+
+def test_survive_harness_asks_one_noul_per_placement_and_plays_the_likeliest():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevPolicy, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "L")
+    best = legal[7]
+    seen = {}
+
+    def ask(state, questions):
+        seen.update(questions)
+        return {
+            "answers": {k: {"type": "noul", "noul": 0.9 if k == option_key(best) else 0.2} for k in questions},
+            "usage": {"input_tokens": 10, "output_tokens": 0},
+        }
+
+    placement = JevPolicy(harness="survive", ask=ask).plan(board, "L", "T", 1)
+
+    assert set(seen) == {option_key(p) for p in legal}
+    assert all(q["type"] == "noul" for q in seen.values())
+    assert (placement.rotation, placement.col) == (best.rotation, best.col)

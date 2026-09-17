@@ -18,6 +18,8 @@ import queue
 import threading
 import time
 
+import numpy as np
+
 from tetris_agent.agent import TetrisAgent
 from tetris_agent.board import ROWS, features
 from tetris_agent.controller import Controller
@@ -217,8 +219,27 @@ class LiveTetrisAgent(TetrisAgent):
         rows_to_fall = (ROWS - 1) - state.falling.bottom_row
         return max(1.0, rows_to_fall * frames_per_row / 60 - _EXEC_HEADROOM_S)
 
+    def _time_to_lock_s(self, state) -> float:
+        """Seconds until this piece, untouched, comes to rest on the stack.
+
+        `_deadline_s` measures to the floor; on a tall stack the piece lands
+        far sooner, and that shrinking window is what a slow policy loses
+        games to. Measured to the tallest column, so it errs short.
+        """
+        from tetris_agent.emulator import Emulator
+
+        # The level the game is at now, not the one it started on: gravity
+        # quickens as lines clear, and that is when this window closes.
+        level = max(self._level or 0, getattr(self.emu, "level", 0) or 0)
+        frames_per_row = Emulator._GRAVITY_RELOADS[min(level, 9)] + 1
+        filled = np.flatnonzero(state.board.any(axis=1))
+        top_row = int(filled[0]) if filled.size else ROWS
+        rows_to_fall = max(0, (top_row - 1) - state.falling.bottom_row)
+        return rows_to_fall * frames_per_row / 60
+
     def _submit(self, state) -> _Pending:
         self.policy.deadline_s = self._deadline_s(state)
+        self.policy.time_to_lock_s = self._time_to_lock_s(state)
         board = state.board.copy()
         piece, next_piece, turn = state.falling.name, state.next_piece, self.collector.turn
         pending = _Pending(turn=turn, piece=piece, board=board, next_piece=next_piece)

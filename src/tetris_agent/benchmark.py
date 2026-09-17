@@ -45,6 +45,9 @@ class Arm:
     # Jev cuts the legal set to this many placements before the model chooses
     # (0 = the model sees every legal placement, as before).
     jev_shortlist: int = 0
+    # With a shortlist: Jev decides alone when its top probability reaches
+    # this, and the model is asked only about the rest.
+    jev_gate: float | None = None
 
     @property
     def name(self) -> str:
@@ -56,6 +59,8 @@ class Arm:
         suffix = "+ex" if self.exemplars else ""
         if self.jev_shortlist:
             suffix += f"+jev{self.jev_shortlist}"
+            if self.jev_gate is not None:
+                suffix += f"g{round(self.jev_gate * 100)}"
         if self.live:
             suffix += "+live"
         elif self.deadline_s is not None:
@@ -95,6 +100,7 @@ def expand_arms(
     fixed_effort: bool = False,
     lookahead_control: bool = False,
     jev_shortlist: int = 0,
+    jev_gate: float | None = None,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -120,6 +126,7 @@ def expand_arms(
             fixed_effort=fixed_effort,
             # Jev shortlisting for Jev would be Jev choosing twice.
             jev_shortlist=0 if is_jev(model) else jev_shortlist,
+            jev_gate=None if is_jev(model) or not jev_shortlist else jev_gate,
         )
         if arm.name not in seen:
             seen.add(arm.name)
@@ -175,8 +182,8 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     if arm.jev_shortlist:
         from tetris_agent.jev_policy import JevShortlist
 
-        policy.shortlist = JevShortlist(k=arm.jev_shortlist)
-        policy.name += f"+jev{arm.jev_shortlist}"
+        policy.shortlist = JevShortlist(k=arm.jev_shortlist, gate=arm.jev_gate)
+        policy.name += f"+jev{arm.jev_shortlist}" + (f"g{round(arm.jev_gate * 100)}" if arm.jev_gate else "")
     return policy
 
 
@@ -483,6 +490,14 @@ def main(argv=None) -> int:
         help="with-Jev arms: Jev cuts each piece's legal placements to its top K before the model chooses "
         "(arms are labeled +jevK; needs TYPESAFE_API_KEY)",
     )
+    parser.add_argument(
+        "--jev-gate",
+        type=float,
+        default=None,
+        metavar="P",
+        help="with --jev-shortlist: when Jev's top placement has probability >= P, play it without asking "
+        "the model (arms are labeled +jevKgNN)",
+    )
     parser.add_argument("--rom", default="rom/tetris.gb")
     parser.add_argument("--max-usd", type=float, default=5.0, help="abort the matrix once spend reaches this")
     parser.add_argument(
@@ -586,6 +601,7 @@ def main(argv=None) -> int:
         fixed_effort=args.fixed_effort,
         lookahead_control=args.lookahead_control,
         jev_shortlist=args.jev_shortlist,
+        jev_gate=args.jev_gate,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
