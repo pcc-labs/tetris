@@ -134,6 +134,35 @@ def test_fast_decision_emits_spawn_decision_locked_per_turn(monkeypatch):
     assert fitness["policy"]["in_flight_at_end"] is False
 
 
+def test_time_limit_ends_the_game_before_the_piece_cap(monkeypatch):
+    timeline = [
+        state_with(falling_at(0, 3, name="J")),
+        state_with(None, filled=4),
+        state_with(falling_at(0, 3, name="T")),
+        state_with(None, filled=8),
+    ]
+    emu = LiveFakeEmulator(timeline)
+    install_live(monkeypatch, emu)
+    install_controller(monkeypatch)
+    # The clock is read at the start and before each piece: 0 s, 1 s, then 6 s.
+    ticks = iter([0.0, 1.0, 6.0])
+    agent = LiveTetrisAgent(
+        emu,
+        Genome(),
+        EventCollector(CapturingPublisher()),
+        max_pieces=2,
+        policy=ScriptedPolicy([Placement(0, 0, 0.0), Placement(1, 7, 0.0)]),
+        thread_factory=ManualThreads(immediate=True),
+        clock=lambda: next(ticks),
+        max_seconds=5.0,
+    )
+
+    fitness = agent.run(timer_div=0)
+
+    assert fitness["pieces_placed"] == 1
+    assert fitness["policy"]["time_limit_hit"] is True
+
+
 def test_gravity_keeps_running_while_the_model_thinks(monkeypatch):
     # The piece stays falling for 30 timeline steps; the decision resolves
     # only after the 10th tick. The frozen loop would show 0 ticks here.

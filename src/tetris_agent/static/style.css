@@ -256,3 +256,81 @@ body {
 .arm-status.think { color: var(--amber); }
 .arm-status.ok { color: var(--phos); }
 .arm-status.late { color: var(--magenta); }
+
+/* ── label deck: one decision, the oracle's grade, Jev's meters, a verdict ── */
+/* Every Jev row is label / bar / answer, the three columns lined up down the
+   panel, one bar style for every question type — the Typewriter's rule. */
+/* Pinned to the telemetry slot so the shelf (later in the DOM) auto-places
+   beside it in column 3, as it does in REPLAY. */
+.panel.label { grid-column: 2; grid-row: 1; border-top-color: var(--amber); }
+.panel.label .panel-head { white-space: nowrap; gap: 12px; }
+.panel.label .panel-head .dim { white-space: normal; text-align: right; }
+.label-empty { color: var(--dim); font-size: 11px; padding: 8px 0 16px; }
+.deck-nav { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; }
+.deck-nav .t-frame { min-width: 64px; text-align: center; }
+.verdict-chip { font-family: var(--pixel); font-size: 9px; padding: 5px 8px; border: 1px solid transparent; }
+.verdict-chip.promote { color: var(--phos); border-color: var(--phos); }
+.verdict-chip.exclude { color: var(--magenta); border-color: var(--magenta); }
+.deck-readouts output { font-size: 12px; }
+.readout output.regret-hot { color: var(--magenta); text-shadow: 0 0 8px rgba(166,58,108,.45); }
+.readout output.regret-warm { color: var(--amber); text-shadow: 0 0 8px rgba(226,177,60,.35); }
+.regret-track { height: 6px; background: #101216; border: 1px solid #262b34; margin-top: 10px; }
+.regret-fill { height: 100%; width: 0; background: var(--phos); transition: width 200ms ease-out, background 200ms; }
+.regret-fill.warm { background: var(--amber); }
+.regret-fill.hot { background: var(--magenta); }
+
+.jev-status { font-size: 9px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+.jev-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #3a3f4c; }
+.jev-status.ok::before { background: var(--phos); }
+.jev-status.asking::before { background: var(--amber); animation: blink 1.2s steps(2) infinite; }
+.jev-status.error { color: #ff5e57; }
+.jev-status.error::before { background: #ff5e57; }
+.jev-status.needs-setup { color: var(--amber); }
+.jev-status.needs-setup::before { background: var(--amber); }
+.jev-notice { font-size: 11px; color: var(--amber); border: 1px dashed var(--amber); padding: 8px 10px; margin-bottom: 10px; }
+.jev-notice code { font-family: var(--mono); color: var(--ink); }
+.jev-notice a { color: var(--ink); }
+.jev-notice.hidden { display: none; }
+.jev-group { margin-bottom: 8px; }
+.jev-group-head { display: flex; gap: 8px; align-items: baseline; border-bottom: 1px solid #262b34; padding: 4px 0; margin-bottom: 4px; }
+.jev-group-head b { font-size: 9px; letter-spacing: 1.5px; color: var(--dim); font-weight: 600; }
+.jev-group-head span { font-size: 9px; color: #4c5262; }
+.jev-row { display: grid; grid-template-columns: 9rem 1fr 7rem; align-items: center; gap: 10px; padding: 4px 0; font-size: 11px; }
+.jev-row .jev-label { color: #9aa3b2; }
+.jev-row .jev-bar { height: 5px; background: #101216; border: 1px solid #262b34; }
+.jev-row .jev-fill { height: 100%; width: 0; background: var(--ink); transition: width 250ms ease-out; }
+.jev-row .jev-answer { text-align: right; color: var(--ink); white-space: nowrap; }
+.jev-row .jev-answer small { color: var(--dim); margin-left: 4px; }
+.jev-row.no .jev-label, .jev-row.no .jev-answer { color: #4c5262; }
+.jev-row.no .jev-fill { background: #4c5262; }
+.jev-row.flash { animation: rowFlash 900ms ease-out; }
+@keyframes rowFlash { from { background: rgba(226,177,60,.18); } to { background: transparent; } }
+
+.verdict-row { display: flex; gap: 8px; padding: 14px 0 4px; flex-wrap: wrap; }
+.v-btn {
+  font-family: var(--pixel); font-size: 9px; padding: 9px 12px; cursor: pointer;
+  background: #101216; color: var(--dim); border: 1px solid #2c313c;
+}
+.v-btn:hover { color: var(--ink); border-color: var(--ink); }
+.v-btn.promote:hover, .v-btn.promote.on { color: var(--phos); border-color: var(--phos); }
+.v-btn.exclude:hover, .v-btn.exclude.on { color: var(--magenta); border-color: var(--magenta); }
+.v-btn.accept { color: var(--amber); border-color: var(--amber); margin-left: auto; }
+.v-btn.hidden { display: none; }
+
+.deck-list { list-style: none; max-height: 220px; overflow-y: auto; font-size: 11px; }
+.deck-list li {
+  display: grid; grid-template-columns: 42px 28px 1fr 52px 16px; gap: 8px; align-items: center;
+  padding: 4px 4px; border-bottom: 1px dashed #262b34; color: #9aa3b2; cursor: pointer;
+}
+.deck-list li:hover { color: var(--ink); }
+.deck-list li.current { background: #101216; color: var(--ink); outline: 1px solid #2c313c; }
+.deck-list li .t { color: var(--dim); }
+.deck-list li .p { font-family: var(--pixel); font-size: 9px; color: var(--ink); }
+.deck-list li .bar { height: 4px; background: #101216; border: 1px solid #262b34; }
+.deck-list li .bar i { display: block; height: 100%; background: var(--phos); }
+.deck-list li .bar i.warm { background: var(--amber); }
+.deck-list li .bar i.hot { background: var(--magenta); }
+.deck-list li .r { text-align: right; color: var(--dim); }
+.deck-list li .v { font-family: var(--pixel); font-size: 9px; text-align: center; }
+.deck-list li .v.promote { color: var(--phos); }
+.deck-list li .v.exclude { color: var(--magenta); }

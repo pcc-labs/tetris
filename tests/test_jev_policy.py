@@ -1,0 +1,175 @@
+"""The Jev arm: a typed choice over the legal set, so nothing to parse and nothing illegal."""
+
+import numpy as np
+
+from tetris_agent.benchmark import Arm, build_policy
+from tetris_agent.jev_policy import JevPolicy, option_key
+from tetris_agent.pricing import cost_usd, is_jev, spec
+from tetris_agent.prompts import legal_placements
+
+
+class FakeJev:
+    def __init__(self, pick=None, fail=False):
+        self.calls = []
+        self.pick = pick
+        self.fail = fail
+
+    def __call__(self, state, questions):
+        self.calls.append((state, questions))
+        if self.fail:
+            raise RuntimeError("TypeSafe 529: overloaded")
+        options = list(questions["placement"]["criteria"])
+        chosen = self.pick or options[-1]
+        probabilities = {k: (0.7 if k == chosen else 0.3 / max(len(options) - 1, 1)) for k in options}
+        return {
+            "model": "jev-test",
+            "answers": {
+                "placement": {"type": "choice", "choice": chosen, "probabilities": probabilities, "confidence": 0.7}
+            },
+            "usage": {"input_tokens": 800, "output_tokens": 0},
+        }
+
+
+def test_plan_returns_the_option_jev_chose_and_accounts_for_it():
+    board = np.zeros((18, 10), dtype=bool)
+    fake = FakeJev(pick="r0c7")
+    policy = JevPolicy(ask=fake, clock=iter([0.0, 0.25]).__next__)
+    placement = policy.plan(board, "O", "I", turn=1)
+    assert (placement.rotation, placement.col) == (0, 7)
+    assert placement.score == 0.7
+    assert policy.last_fallback is False
+    assert policy.last_reason.startswith("r0c7 p=0.70, next ")
+    stats = policy.stats()
+    assert stats["decisions"] == 1 and stats["illegal_count"] == 0
+    assert stats["latency_ms_mean"] == 250.0
+    assert stats["cost_usd"] == cost_usd("jev-latest", 800, 0)
+    assert stats["effort"] is None
+
+
+def test_features_harness_describes_every_legal_option_and_board_harness_does_not():
+    board = np.zeros((18, 10), dtype=bool)
+    legal = legal_placements(board, "T")
+    fake = FakeJev()
+    JevPolicy(harness="features", ask=fake).plan(board, "T", "O", turn=3)
+    state, questions = fake.calls[0]
+    criteria = questions["placement"]["criteria"]
+    assert set(criteria) == {option_key(p) for p in legal}
+    assert all("clears" in text for text in criteria.values())
+    assert state["piece"] == "T" and state["next_piece"] == "O" and len(state["board"]) == 18
+    assert state["legal_placements"] == list(criteria)
+
+    bare = FakeJev()
+    JevPolicy(harness="board", ask=bare).plan(board, "T", "O", turn=3)
+    assert all(v is None for v in bare.calls[0][1]["placement"]["criteria"].values())
+
+
+def test_exemplars_ride_in_the_state():
+    fake = FakeJev()
+    JevPolicy(ask=fake, exemplar_block="# How a strong human placed pieces").plan(
+        np.zeros((18, 10), dtype=bool), "I", "I", turn=1
+    )
+    assert fake.calls[0][0]["how_a_strong_human_played"].startswith("# How a strong human")
+
+
+def test_api_failure_falls_back_and_is_not_a_choice():
+    fake = FakeJev(fail=True)
+    policy = JevPolicy(ask=fake)
+    placement = policy.plan(np.zeros((18, 10), dtype=bool), "O", "I", turn=1)
+    assert placement is not None
+    assert policy.last_fallback is True  # the grader must skip it
+    assert policy.stats()["api_errors"] == 1 and policy.stats()["decisions"] == 0
+
+
+def test_benchmark_routes_jev_models_to_the_jev_policy():
+    assert is_jev("jev-latest") and not is_jev("claude-opus-5")
+    assert spec("jev-latest").supports_effort is False
+    policy = build_policy(Arm(policy="model", model="jev-latest", harness="features"))
+    assert isinstance(policy, JevPolicy)
+    assert policy.name == "jev-latest/features"
+    assert Arm(policy="model", model="jev-latest", harness="features", exemplars=True).name == "jev-latest/features+ex"
+
+
+def test_shortlist_keeps_jevs_top_k_and_falls_back_to_everything_on_error():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevShortlist, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "T")
+    favoured = [option_key(p) for p in legal[-3:]]
+
+    def ask(state, questions):
+        assert set(questions["placement"]["criteria"]) == {option_key(p) for p in legal}
+        return {
+            "answers": {"placement": {"choice": favoured[0], "probabilities": {k: 0.3 for k in favoured}}},
+            "usage": {"input_tokens": 100, "output_tokens": 0},
+        }
+
+    shortlist = JevShortlist(k=3, ask=ask)
+    assert {option_key(p) for p in shortlist(board, "T", "I", 1, legal)} == set(favoured)
+    assert shortlist.stats()["jev_calls"] == 1 and shortlist.cost_usd() > 0
+
+    def broken(state, questions):
+        raise RuntimeError("down")
+
+    failing = JevShortlist(k=3, ask=broken)
+    assert failing(board, "T", "I", 1, legal) == legal
+    assert failing.stats()["jev_errors"] == 1
+
+
+def test_gate_lets_a_confident_jev_decide_and_leaves_the_rest_to_the_model():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevShortlist, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "T")
+    top = option_key(legal[4])
+
+    def answering(p):
+        def ask(state, questions):
+            return {"answers": {"placement": {"choice": top, "probabilities": {top: p}}}, "usage": {}}
+
+        return ask
+
+    sure = JevShortlist(k=3, gate=0.7, ask=answering(0.8))
+    assert [option_key(x) for x in sure(board, "T", "I", 1, legal)] == [top]
+    assert sure.stats()["jev_decided"] == 1
+
+    unsure = JevShortlist(k=3, gate=0.7, ask=answering(0.4))
+    assert len(unsure(board, "T", "I", 1, legal)) == 3
+    assert unsure.stats()["jev_decided"] == 0
+
+    # Out of time, the same unsure Jev still decides: a fast move beats a late one.
+    assert [option_key(x) for x in unsure(board, "T", "I", 2, legal, decide=True)] == [top]
+    assert unsure.stats()["jev_rushed"] == 1
+
+
+def test_survive_harness_asks_one_noul_per_placement_and_plays_the_likeliest():
+    import numpy as np
+
+    from tetris_agent.board import COLS, ROWS
+    from tetris_agent.jev_policy import JevPolicy, option_key
+    from tetris_agent.prompts import legal_placements
+
+    board = np.zeros((ROWS, COLS), dtype=bool)
+    legal = legal_placements(board, "L")
+    best = legal[7]
+    seen = {}
+
+    def ask(state, questions):
+        seen.update(questions)
+        return {
+            "answers": {k: {"type": "noul", "noul": 0.9 if k == option_key(best) else 0.2} for k in questions},
+            "usage": {"input_tokens": 10, "output_tokens": 0},
+        }
+
+    placement = JevPolicy(harness="survive", ask=ask).plan(board, "L", "T", 1)
+
+    assert set(seen) == {option_key(p) for p in legal}
+    assert all(q["type"] == "noul" for q in seen.values())
+    assert (placement.rotation, placement.col) == (best.rotation, best.col)

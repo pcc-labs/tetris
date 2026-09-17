@@ -17,6 +17,16 @@ const state = {
   inputWs: null,
   armMax: 0,          // pieces in the arm now streaming (banner progress)
   hud: { score: 0, lines: 0, level: 0, piece: 0, holes: 0, misexec: 0 },
+  deck: {              // LABEL mode: the decisions of one run, one at a time
+    runId: null,
+    decisions: [],
+    index: 0,
+    jev: null,         // { questions, groups, setup } from /api/jev/questions
+    answers: null,     // Jev's answers for the current decision
+    prevAnswers: null, // ...and for the previous one, so moved rows can flash
+    asking: null,      // AbortController of the request in flight
+    timer: null,
+  },
 };
 
 /* ── HUD ── */
@@ -239,7 +249,7 @@ async function loadShelf() {
     meta.className = "cart-meta";
     meta.innerHTML = `<span>${run.fitness.lines ?? 0} lines · <b>${run.fitness.score ?? 0}</b></span><span>${run.frame_count}f</span>`;
     cart.append(label, meta);
-    cart.onclick = () => insertCart(run.run_id);
+    cart.onclick = () => (state.mode === "label" ? loadDeck(run.run_id) : insertCart(run.run_id));
     shelf.appendChild(cart);
   }
   if (!runs.length) shelf.textContent = "no recorded runs yet — play one with recording on";
@@ -329,26 +339,344 @@ async function loadBench() {
   body.replaceChildren(table);
 }
 
+/* ── LABEL mode ──
+   One decision at a time, in the Typewriter's shape: pick a cartridge, step
+   through its pieces, and for each one see the board it was taken on (on the
+   LCD), the oracle's regret, Jev's typed judgments (re-asked on every step,
+   abortable, last answers held while the next are on the wire), and the
+   verdict the exemplar miner reads back. */
+
+const ROWS = 18, COLS = 10, CELL = 8;   // the 10×18 well drawn 8px a cell, centred on the 160×144 LCD
+const BOARD_X = (160 - COLS * CELL) / 2;
+const JEV_DEBOUNCE_MS = 120;
+
+function drawBoard(d) {
+  // Game Boy greens: the well is the light shade, settled cells the darkest,
+  // the placed piece one step lighter so it reads as "just landed", and the
+  // oracle's pick (when it differs) an outline the eye can compare against.
+  ctx.fillStyle = "#0f380f";
+  ctx.fillRect(0, 0, 160, 144);
+  ctx.fillStyle = "#9bbc0f";
+  ctx.fillRect(BOARD_X, 0, COLS * CELL, ROWS * CELL);
+  d.board.forEach((row, r) => {
+    for (let c = 0; c < COLS; c++) {
+      if (row[c] !== "#") continue;
+      ctx.fillStyle = "#0f380f";
+      ctx.fillRect(BOARD_X + c * CELL, r * CELL, CELL, CELL);
+      ctx.fillStyle = "#306230";
+      ctx.fillRect(BOARD_X + c * CELL + 1, r * CELL + 1, CELL - 2, CELL - 2);
+    }
+  });
+  for (const [r, c] of d.placed_cells || []) {
+    ctx.fillStyle = "#0f380f";
+    ctx.fillRect(BOARD_X + c * CELL, r * CELL, CELL, CELL);
+    ctx.fillStyle = "#8bac0f";
+    ctx.fillRect(BOARD_X + c * CELL + 2, r * CELL + 2, CELL - 4, CELL - 4);
+  }
+  const placed = new Set((d.placed_cells || []).map(([r, c]) => `${r},${c}`));
+  const bestDiffers = (d.best_cells || []).some(([r, c]) => !placed.has(`${r},${c}`));
+  if (bestDiffers) {
+    ctx.strokeStyle = "#0f380f";
+    ctx.setLineDash([2, 2]);
+    for (const [r, c] of d.best_cells) ctx.strokeRect(BOARD_X + c * CELL + 0.5, r * CELL + 0.5, CELL - 1, CELL - 1);
+    ctx.setLineDash([]);
+  }
+  $("lcd-notice").classList.add("hidden");
+}
+
+function regretHeat(norm) {
+  return norm >= 0.5 ? "hot" : norm >= 0.15 ? "warm" : "";
+}
+
+async function loadJevMeta() {
+  if (state.deck.jev) return;
+  try {
+    state.deck.jev = await (await fetch("/api/jev/questions")).json();
+  } catch {
+    state.deck.jev = { questions: [], groups: [], setup: { configured: false } };
+  }
+}
+
+async function loadDeck(runId) {
+  document.querySelectorAll(".cart").forEach((c) => c.classList.toggle("inserted", c.dataset.runId === runId));
+  await loadJevMeta();
+  const deck = state.deck;
+  deck.runId = runId;
+  const body = await (await fetch(`/api/runs/${runId}/decisions`)).json();
+  deck.decisions = body.decisions;
+  deck.index = 0;
+  deck.answers = deck.prevAnswers = null;
+  // The replay verifies a prefix; a tuck or misread ends it. Say how much of
+  // the run is on the deck so a 5-of-50 never reads as a 5-piece run.
+  const verified = body.decisions.length === body.placed ? "" : ` · ${body.decisions.length} of ${body.placed} verified`;
+  $("label-file").textContent = `runs/${runId}/labels.json${verified}`;
+  $("label-empty").classList.toggle("hidden", true);
+  $("label-deck").classList.remove("hidden");
+  renderDeckList();
+  showDecision(0);
+}
+
+function renderDeckList() {
+  const list = $("deck-list");
+  list.replaceChildren();
+  state.deck.decisions.forEach((d, i) => {
+    const li = document.createElement("li");
+    li.dataset.index = i;
+    const norm = d.grade?.regret_norm ?? 0;
+    const verdict = d.label?.verdict || "";
+    li.innerHTML =
+      `<span class="t">t${d.turn}</span><span class="p">${d.piece}</span>` +
+      `<span class="bar"><i class="${regretHeat(norm)}" style="width:${Math.round(norm * 100)}%"></i></span>` +
+      `<span class="r">${d.grade ? d.grade.regret.toFixed(1) : "—"}</span>` +
+      `<span class="v ${verdict}">${verdict === "promote" ? "★" : verdict === "exclude" ? "✕" : ""}</span>`;
+    li.onclick = () => showDecision(i);
+    list.appendChild(li);
+  });
+  renderDeckCounts();
+}
+
+function renderDeckCounts() {
+  const ds = state.deck.decisions;
+  const promoted = ds.filter((d) => d.label?.verdict === "promote").length;
+  const excluded = ds.filter((d) => d.label?.verdict === "exclude").length;
+  $("d-counts").textContent = `${promoted} promoted · ${excluded} excluded`;
+}
+
+function currentDecision() {
+  return state.deck.decisions[state.deck.index] || null;
+}
+
+function showDecision(i) {
+  const deck = state.deck;
+  if (!deck.decisions.length) return;
+  deck.index = Math.max(0, Math.min(i, deck.decisions.length - 1));
+  const d = currentDecision();
+  drawBoard(d);
+  $("d-pos").textContent = `${deck.index + 1}/${deck.decisions.length}`;
+  $("d-piece").textContent = `${d.piece} → ${d.next_piece}`;
+  const g = d.grade;
+  const regretOut = $("d-regret");
+  regretOut.textContent = g ? g.regret.toFixed(1) : "—";
+  regretOut.className = g ? regretHeat(g.regret_norm).replace(/^(.)/, "regret-$1") : "";
+  $("d-rank").textContent = g ? `${g.rank}/${g.legal_count}` : "—";
+  $("d-chosen").textContent = `r${d.rotation} c${d.col}`;
+  $("d-best").textContent = g ? `r${g.best[0]} c${g.best[1]}` : "—";
+  $("d-result").textContent = d.lines_delta ? `${d.lines_delta} LINE${d.lines_delta > 1 ? "S" : ""}` : `${d.holes} HOLES`;
+  const bar = $("d-regret-bar");
+  bar.style.width = `${Math.round((g?.regret_norm ?? 0) * 100)}%`;
+  bar.className = `regret-fill ${g ? regretHeat(g.regret_norm) : ""}`;
+  renderVerdict();
+  document.querySelectorAll("#deck-list li").forEach((li) => li.classList.toggle("current", Number(li.dataset.index) === deck.index));
+  document.querySelector("#deck-list li.current")?.scrollIntoView({ block: "nearest" });
+  askJev();
+}
+
+function renderVerdict() {
+  const d = currentDecision();
+  const verdict = d?.label?.verdict || "";
+  const chip = $("d-verdict");
+  chip.textContent = verdict ? `${verdict.toUpperCase()}${d.label.source === "jev" ? " · via jev" : ""}` : "";
+  chip.className = `verdict-chip ${verdict}`;
+  $("v-promote").classList.toggle("on", verdict === "promote");
+  $("v-exclude").classList.toggle("on", verdict === "exclude");
+  const proposal = state.deck.answers?.verdict?.choice;
+  $("v-accept").classList.toggle("hidden", !(proposal === "promote" || proposal === "exclude") || proposal === verdict);
+}
+
+/* Jev: one call per decision, every question at once. A step cancels the
+   pending debounce and aborts the request in flight, so paging quickly never
+   queues stale work, and the meters keep the last answers until new ones land. */
+function setJevStatus(text, cls) {
+  const el = $("jev-status");
+  el.textContent = text;
+  el.className = `jev-status${cls ? ` ${cls}` : ""}`;
+}
+
+function askJev() {
+  const deck = state.deck;
+  clearTimeout(deck.timer);
+  deck.asking?.abort();
+  const setup = deck.jev?.setup;
+  if (setup && !setup.configured) {
+    setJevStatus(`needs ${setup.keyVar}`, "needs-setup");
+    const notice = $("jev-notice");
+    notice.innerHTML = `No TypeSafe key: set <code>${setup.keyVar}</code> in the viewer's environment ` +
+      `(<a href="${setup.consoleUrl}" target="_blank" rel="noreferrer">get one</a>) and restart it. ` +
+      `Labels still work without Jev.`;
+    notice.classList.remove("hidden");
+    renderMeters();
+    return;
+  }
+  $("jev-notice").classList.add("hidden");
+  const d = currentDecision();
+  if (!d) return;
+  const ctrl = new AbortController();
+  deck.asking = ctrl;
+  deck.timer = setTimeout(async () => {
+    setJevStatus("asking…", "asking");
+    const started = performance.now();
+    try {
+      const res = await fetch(`/api/runs/${deck.runId}/decisions/${d.turn}/judge`, { method: "POST", signal: ctrl.signal });
+      const body = await res.text();
+      let data = null;
+      try { data = JSON.parse(body); } catch { /* an HTML error page; fall through to HTTP status */ }
+      if (ctrl.signal.aborted) return;
+      if (!res.ok || !data) {
+        setJevStatus(data?.detail?.error || data?.detail?.reason || `HTTP ${res.status}`, "error");
+        return;
+      }
+      deck.prevAnswers = deck.answers;
+      deck.answers = data.answers;
+      setJevStatus(`${Object.keys(data.answers).length} questions · ${Math.round(performance.now() - started)} ms`, "ok");
+      renderMeters();
+      renderVerdict();
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      setJevStatus(String(err), "error");
+    }
+  }, JEV_DEBOUNCE_MS);
+}
+
+/* Answer → one 0–1 number for the bar: P(yes) for noul, position on the
+   scale for score, the winner's probability for choice. */
+function fillOf(meta, a) {
+  if (!a) return 0;
+  if (a.type === "noul") return a.noul;
+  if (a.type === "score") return (meta.criteria?.length > 1) ? a.score / (meta.criteria.length - 1) : 0;
+  if (a.type === "choice") return a.probabilities?.[a.choice] ?? a.confidence ?? 0;
+  return 0;
+}
+
+function headlineOf(meta, a) {
+  if (!a) return { text: "—", detail: "" };
+  const pct = (p) => `${Math.round(p * 100)}%`;
+  if (a.type === "noul") return { text: a.noul >= 0.5 ? "Yes" : "No", detail: pct(a.noul) };
+  if (a.type === "score") {
+    const levels = meta.criteria || [];
+    const i = Math.max(0, Math.min(levels.length - 1, Math.round(a.score)));
+    return { text: levels[i] ?? a.score.toFixed(2), detail: a.score.toFixed(2) };
+  }
+  if (a.type === "choice") return { text: a.choice, detail: pct(a.probabilities?.[a.choice] ?? a.confidence ?? 0) };
+  return { text: "—", detail: "" };
+}
+
+function moved(prev, next) {
+  if (!prev || !next || prev.type !== next.type) return false;
+  if (next.type === "noul") return (prev.noul >= 0.5) !== (next.noul >= 0.5) || Math.abs(prev.noul - next.noul) >= 0.15;
+  if (next.type === "score") return Math.abs(prev.score - next.score) >= 0.75;
+  if (next.type === "choice") return prev.choice !== next.choice;
+  return false;
+}
+
+function renderMeters() {
+  const deck = state.deck;
+  const root = $("jev-meters");
+  root.replaceChildren();
+  if (!deck.jev) return;
+  for (const group of deck.jev.groups) {
+    const box = document.createElement("div");
+    box.className = "jev-group";
+    box.innerHTML = `<div class="jev-group-head"><b>${group.title.toUpperCase()}</b><span>${group.blurb}</span></div>`;
+    for (const meta of deck.jev.questions.filter((q) => q.group === group.id)) {
+      const a = deck.answers?.[meta.id];
+      const { text, detail } = headlineOf(meta, a);
+      const row = document.createElement("div");
+      row.className = "jev-row";
+      row.dataset.q = meta.id;
+      if (a?.type === "noul" && a.noul < 0.5) row.classList.add("no");
+      if (moved(deck.prevAnswers?.[meta.id], a)) row.classList.add("flash");
+      row.innerHTML =
+        `<span class="jev-label">${meta.label}</span>` +
+        `<span class="jev-bar"><i class="jev-fill" style="width:${Math.round(fillOf(meta, a) * 100)}%"></i></span>` +
+        `<span class="jev-answer" data-value="${text}">${text}${detail ? `<small>${detail}</small>` : ""}</span>`;
+      box.appendChild(row);
+    }
+    root.appendChild(box);
+  }
+}
+
+/* Verdicts: written to runs/<id>/labels.json, which the exemplar miner reads. */
+async function setVerdict(verdict, source = "human") {
+  const deck = state.deck;
+  const d = currentDecision();
+  if (!d) return;
+  const url = `/api/runs/${deck.runId}/labels/${d.turn}`;
+  let res;
+  if (verdict) {
+    res = await fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verdict, source, jev: deck.answers }),
+    });
+    if (res.ok) d.label = await res.json();
+  } else {
+    res = await fetch(url, { method: "DELETE" });
+    if (res.ok || res.status === 404) d.label = null;
+  }
+  if (!res.ok && res.status !== 404) { setJevStatus(`label HTTP ${res.status}`, "error"); return; }
+  renderVerdict();
+  const li = document.querySelector(`#deck-list li[data-index="${deck.index}"] .v`);
+  if (li) {
+    const v = d.label?.verdict || "";
+    li.className = `v ${v}`;
+    li.textContent = v === "promote" ? "★" : v === "exclude" ? "✕" : "";
+  }
+  renderDeckCounts();
+}
+
+$("d-prev").onclick = () => showDecision(state.deck.index - 1);
+$("d-next").onclick = () => showDecision(state.deck.index + 1);
+$("v-promote").onclick = () => setVerdict("promote");
+$("v-exclude").onclick = () => setVerdict("exclude");
+$("v-clear").onclick = () => setVerdict(null);
+$("v-accept").onclick = () => {
+  const proposal = state.deck.answers?.verdict?.choice;
+  if (proposal === "promote" || proposal === "exclude") setVerdict(proposal, "jev");
+};
+
+window.addEventListener("keydown", (e) => {
+  if (state.mode !== "label" || !state.deck.decisions.length) return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const actions = {
+    ArrowLeft: () => showDecision(state.deck.index - 1),
+    ArrowRight: () => showDecision(state.deck.index + 1),
+    p: () => setVerdict("promote"),
+    x: () => setVerdict("exclude"),
+    c: () => setVerdict(null),
+    j: () => $("v-accept").click(),
+  };
+  const action = actions[e.key];
+  if (!action) return;
+  e.preventDefault();
+  action();
+});
+
 /* ── mode switching ── */
 function setMode(mode) {
   state.mode = mode;
-  $("btn-live").classList.toggle("active", mode === "live");
-  $("btn-replay").classList.toggle("active", mode === "replay");
-  $("btn-bench").classList.toggle("active", mode === "bench");
-  $("shelf").classList.toggle("hidden", mode !== "replay");
+  for (const m of MODES) $(`btn-${m}`).classList.toggle("active", mode === m);
+  $("shelf").classList.toggle("hidden", mode !== "replay" && mode !== "label");
   $("replay-deck").classList.toggle("hidden", mode !== "replay");
   $("bench-panel").classList.toggle("hidden", mode !== "bench");
+  $("telemetry").classList.toggle("hidden", mode === "label");
+  $("label-panel").classList.toggle("hidden", mode !== "label");
   $("lcd-notice").classList.remove("hidden");
   resetHud();
+  if (mode !== "label") { clearTimeout(state.deck.timer); state.deck.asking?.abort(); }
   if (mode === "replay") { setPlaying(false); loadShelf(); setPlayMode(false); }
   else if (mode === "bench") { setPlaying(false); loadBench(); setPlayMode(false); }
+  else if (mode === "label") {
+    setPlaying(false); setPlayMode(false);
+    loadShelf().then(() => { if (state.deck.runId) loadDeck(state.deck.runId); });
+  }
   else { connectLive(); connectInput(); }
 }
 
-const MODES = ["live", "replay", "bench"];
+const MODES = ["live", "replay", "bench", "label"];
 $("btn-live").onclick = () => setMode("live");
 $("btn-replay").onclick = () => setMode("replay");
 $("btn-bench").onclick = () => setMode("bench");
+$("btn-label").onclick = () => setMode("label");
 $("pad-select").onclick = () => setMode(MODES[(MODES.indexOf(state.mode) + 1) % MODES.length]);
 $("pad-start").onclick = () => state.run && setPlaying(!state.playing);
 $("t-play").onclick = () => state.run && setPlaying(!state.playing);

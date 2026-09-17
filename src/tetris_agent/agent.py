@@ -49,6 +49,7 @@ class TetrisAgent:
         meter=None,
         grader=None,
         record_frames: bool = True,
+        max_seconds: float | None = None,
     ):
         self.emu = emu
         self.genome = genome
@@ -56,6 +57,11 @@ class TetrisAgent:
         self.collector = collector
         self.recorder = recorder
         self.max_pieces = max_pieces
+        # Wall-clock cap on a live game, alongside the piece cap: whichever
+        # comes first ends the run, so a slow arm places fewer pieces in the
+        # same time instead of just taking longer. Paused games ignore it —
+        # their clock stops while the policy thinks, so seconds mean nothing.
+        self.max_seconds = max_seconds
         # None means energy is not measured for this run. Left off by default so
         # constructing an agent never probes the host for power sensors; the CLI
         # and the benchmark switch it on for local arms, where the figure matters.

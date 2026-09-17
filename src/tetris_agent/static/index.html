@@ -6,7 +6,7 @@
 <title>GRAMBOY · tetris-agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
 <div class="bench">
@@ -18,6 +18,7 @@
       <button id="btn-live" class="mode active" role="tab">LIVE</button>
       <button id="btn-replay" class="mode" role="tab">REPLAY</button>
       <button id="btn-bench" class="mode" role="tab">BENCH</button>
+      <button id="btn-label" class="mode" role="tab">LABEL</button>
     </div>
   </header>
 
@@ -67,7 +68,7 @@
     </section>
 
     <!-- ══════════ BENCH TELEMETRY ══════════ -->
-    <section class="panel" aria-label="Telemetry">
+    <section class="panel" id="telemetry" aria-label="Telemetry">
       <div class="panel-head">TELEMETRY <span id="feed-state" class="feed-state">IDLE</span></div>
 
       <div id="arm-banner" class="arm-banner hidden">
@@ -109,6 +110,52 @@
       <div id="carts" class="carts"></div>
     </aside>
 
+    <!-- ══════════ LABEL DECK ══════════ -->
+    <!-- One decision at a time: the board it was taken on (drawn on the LCD),
+         the oracle's grade, Jev's typed judgments of it, and the verdict the
+         exemplar miner will read. -->
+    <section class="panel label hidden" id="label-panel" aria-label="Label deck">
+      <div class="panel-head">LABEL DECK <span class="dim" id="label-file">pick a cartridge</span></div>
+
+      <div id="label-empty" class="label-empty">insert a cartridge to review its decisions</div>
+
+      <div id="label-deck" class="hidden">
+        <div class="deck-nav">
+          <button id="d-prev" class="t-btn" title="previous (←)">◀</button>
+          <span id="d-pos" class="t-frame">0/0</span>
+          <button id="d-next" class="t-btn" title="next (→)">▶</button>
+          <span id="d-verdict" class="verdict-chip"></span>
+          <span id="d-counts" class="dim"></span>
+        </div>
+
+        <div class="readouts deck-readouts">
+          <div class="readout"><label>PIECE</label><output id="d-piece">—</output></div>
+          <div class="readout"><label>REGRET</label><output id="d-regret">—</output></div>
+          <div class="readout"><label>RANK</label><output id="d-rank">—</output></div>
+          <div class="readout"><label>CHOSEN</label><output id="d-chosen">—</output></div>
+          <div class="readout"><label>ORACLE</label><output id="d-best">—</output></div>
+          <div class="readout"><label>RESULT</label><output id="d-result">—</output></div>
+        </div>
+        <div class="regret-track" title="regret, normalized against the worst legal placement">
+          <div id="d-regret-bar" class="regret-fill"></div>
+        </div>
+
+        <div class="panel-head small">JEV <span id="jev-status" class="jev-status">idle</span></div>
+        <div id="jev-notice" class="jev-notice hidden"></div>
+        <div id="jev-meters" class="jev-meters"></div>
+
+        <div class="verdict-row">
+          <button id="v-promote" class="v-btn promote" title="promote (p)">PROMOTE</button>
+          <button id="v-exclude" class="v-btn exclude" title="exclude (x)">EXCLUDE</button>
+          <button id="v-clear" class="v-btn" title="clear (c)">CLEAR</button>
+          <button id="v-accept" class="v-btn accept hidden" title="accept Jev's verdict (j)">ACCEPT JEV</button>
+        </div>
+
+        <div class="panel-head small">DECISIONS <span class="dim">← → step · p x c label</span></div>
+        <ul id="deck-list" class="deck-list"></ul>
+      </div>
+    </section>
+
     <!-- ══════════ BENCHMARK LEADERBOARD ══════════ -->
     <section class="panel bench hidden" id="bench-panel" aria-label="Benchmark results">
       <div class="panel-head">LEADERBOARD <span class="dim" id="bench-stamp">model × harness × effort</span></div>
@@ -122,6 +169,6 @@
     <span>fitness → healer → race → genome</span>
   </footer>
 </div>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

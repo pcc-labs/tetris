@@ -12,7 +12,9 @@ list into a `{"rotation", "col", "reason"}` dict or None on failure.
 
 import json
 import logging
+import statistics
 import time
+from collections import deque
 
 import anthropic
 import numpy as np
@@ -31,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 8192
 CHAT_HISTORY_TURNS = 12  # kept pairs in the `chat` harness before trimming
+
+
+# Rough time to move and rotate a piece into place once the answer is in.
+_STEER_S = 0.6
 
 
 class LLMPlacementPolicy:
@@ -92,6 +98,11 @@ class LLMPlacementPolicy:
         self._decide_started: float | None = None
         self._ema_latency_s: float | None = None
         self._tier_index: int | None = None
+        # Optional pre-filter on the legal set (see jev_policy.JevShortlist):
+        # the model then chooses among what it returns. Its time is part of
+        # this arm's latency and its bill part of this arm's cost.
+        self.shortlist = None
+        self._recent_latency_s: deque[float] = deque(maxlen=7)
 
     # ---- the Policy contract -------------------------------------------------
 
@@ -99,13 +110,40 @@ class LLMPlacementPolicy:
         legal = legal_placements(board, piece)
         if not legal:
             return None
+        if self.shortlist is not None:
+            started = self._clock()
+            # Out of time: the piece will rest before this model can answer
+            # (its recent latency plus time to steer), so a shortlist that can
+            # decide by itself should — a fast good-enough move beats a late one.
+            # Median of the last few calls, not the controller's EMA: one slow
+            # call must not convince us the model is slow, because every move
+            # Jev then takes is a move that never refreshes the estimate.
+            # Needs a few real answers first — a single failed or slow first
+            # call would otherwise hand Jev the whole game.
+            eta = statistics.median(self._recent_latency_s) if len(self._recent_latency_s) >= 3 else None
+            lock = getattr(self, "time_to_lock_s", None)
+            rushed = eta is not None and lock is not None and lock < eta + _STEER_S
+            legal = self.shortlist(board, piece, next_piece, turn, legal, decide=rushed)
+            self.usage["latency_ms_total"] += (self._clock() - started) * 1000
+            if len(legal) == 1:
+                # The shortlist was confident enough to decide: nothing to ask.
+                self.last_fallback = False
+                self.last_reason = "decided by the shortlist"
+                self.last_output_tokens = 0
+                return Placement(rotation=legal[0].rotation, col=legal[0].col, score=0.0)
 
         situation = classify(board, piece, next_piece, self.genome) if self.harness == "routed" else None
         self.last_situation = situation
         prompt = build_user_prompt(
             self.harness, board, piece, next_piece, legal, turn, deadline_s=self.deadline_s, situation=situation
         )
-        choice = self._decide(prompt, legal)
+        if self.shortlist is None:
+            choice = self._decide(prompt, legal)
+        else:
+            asked = self._clock()
+            choice = self._decide(prompt, legal)
+            if choice is not None:  # a failed call says nothing about how fast the model answers
+                self._recent_latency_s.append(self._clock() - asked)
         self.last_fallback = choice is None
         if choice is None:
             # Every attempt failed; keep the run alive with a deterministic
@@ -118,13 +156,15 @@ class LLMPlacementPolicy:
         u = self.usage
         decisions = max(u["decisions"], 1)
         gen_s = u["gen_ms_total"] / 1000
+        # Moves the shortlist decided cost time but no model call.
+        moves = decisions + (self.shortlist.decided if self.shortlist is not None else 0)
         return {
             "policy": self.name,
             "model": self.model,
             "harness": self.harness,
             "effort": self.effort,
             **{k: v for k, v in u.items() if k not in ("latency_ms_total", "gen_ms_total")},
-            "latency_ms_mean": round(u["latency_ms_total"] / decisions, 1),
+            "latency_ms_mean": round(u["latency_ms_total"] / moves, 1),
             "tokens_per_second": round(u["output_tokens"] / gen_s, 1) if gen_s > 0 else 0.0,
             "tokens_per_decision": round(u["output_tokens"] / decisions, 1),
             "cost_usd": cost_usd(
@@ -133,7 +173,9 @@ class LLMPlacementPolicy:
                 u["output_tokens"],
                 u["cache_read_tokens"],
                 u["cache_write_tokens"],
-            ),
+            )
+            + (self.shortlist.cost_usd() if self.shortlist is not None else 0.0),
+            **(self.shortlist.stats() if self.shortlist is not None else {}),
         }
 
     # ---- internals -----------------------------------------------------------

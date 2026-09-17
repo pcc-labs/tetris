@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tetris_agent.fitness import race_score
-from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_pi, spec
+from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_jev, is_pi, spec
 from tetris_agent.recorder import RunRecorder
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 RESULTS_DIR = Path("data/benchmarks")
 RUNS_DIR = Path("runs")
 DEFAULT_SEEDS = (0x00,)
-DEFAULT_MAX_PIECES = 30
+# 30 pieces is 120 cells — at most 12 lines — and the two-ply oracle, the
+# heuristic and the best model arms all land within ~70 race points of each
+# other there. At 150 the oracle/heuristic gap is >1,000, so quality separates.
+DEFAULT_MAX_PIECES = 150
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,12 @@ class Arm:
     # The deadline controller may not step the effort tier: the row measures
     # the configured level, not what the ladder settled on.
     fixed_effort: bool = False
+    # Jev cuts the legal set to this many placements before the model chooses
+    # (0 = the model sees every legal placement, as before).
+    jev_shortlist: int = 0
+    # With a shortlist: Jev decides alone when its top probability reaches
+    # this, and the model is asked only about the rest.
+    jev_gate: float | None = None
 
     @property
     def name(self) -> str:
@@ -48,6 +57,10 @@ class Arm:
         if self.effort:
             parts.append(self.effort)
         suffix = "+ex" if self.exemplars else ""
+        if self.jev_shortlist:
+            suffix += f"+jev{self.jev_shortlist}"
+            if self.jev_gate is not None:
+                suffix += f"g{round(self.jev_gate * 100)}"
         if self.live:
             suffix += "+live"
         elif self.deadline_s is not None:
@@ -86,6 +99,8 @@ def expand_arms(
     deadline_s: float | None = None,
     fixed_effort: bool = False,
     lookahead_control: bool = False,
+    jev_shortlist: int = 0,
+    jev_gate: float | None = None,
 ) -> list[Arm]:
     """Cartesian product, minus combinations the API rejects.
 
@@ -109,6 +124,9 @@ def expand_arms(
             live=live,
             deadline_s=None if live else deadline_s,
             fixed_effort=fixed_effort,
+            # Jev shortlisting for Jev would be Jev choosing twice.
+            jev_shortlist=0 if is_jev(model) else jev_shortlist,
+            jev_gate=None if is_jev(model) or not jev_shortlist else jev_gate,
         )
         if arm.name not in seen:
             seen.add(arm.name)
@@ -133,10 +151,14 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     if arm.policy == "lookahead":
         return LookaheadPolicy(genome)
     block = exemplar_block if arm.exemplars else ""
+    if is_jev(arm.model):
+        from tetris_agent.jev_policy import JevPolicy
+
+        return JevPolicy(model=arm.model, harness=arm.harness, exemplar_block=block, genome=genome)
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
 
-        return PiPolicy(
+        policy = PiPolicy(
             model=arm.model,
             harness=arm.harness,
             effort=arm.effort,
@@ -146,16 +168,23 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
             genome=genome,
             fixed_effort=arm.fixed_effort,
         )
-    from tetris_agent.model_policy import ModelPolicy
+    else:
+        from tetris_agent.model_policy import ModelPolicy
 
-    return ModelPolicy(
-        model=arm.model,
-        harness=arm.harness,
-        effort=arm.effort,
-        exemplar_block=block,
-        genome=genome,
-        fixed_effort=arm.fixed_effort,
-    )
+        policy = ModelPolicy(
+            model=arm.model,
+            harness=arm.harness,
+            effort=arm.effort,
+            exemplar_block=block,
+            genome=genome,
+            fixed_effort=arm.fixed_effort,
+        )
+    if arm.jev_shortlist:
+        from tetris_agent.jev_policy import JevShortlist
+
+        policy.shortlist = JevShortlist(k=arm.jev_shortlist, gate=arm.jev_gate)
+        policy.name += f"+jev{arm.jev_shortlist}" + (f"g{round(arm.jev_gate * 100)}" if arm.jev_gate else "")
+    return policy
 
 
 def _arm_meta(arm: Arm, seed: int, max_pieces: int) -> dict:
@@ -188,6 +217,7 @@ def run_arm(
     streamer=None,
     measure_power: bool = False,
     grade_quality: bool = True,
+    max_seconds: float | None = None,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
@@ -238,6 +268,7 @@ def run_arm(
             meter=meter,
             grader=grader,
             record_frames=False,
+            max_seconds=max_seconds if arm.live else None,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
@@ -443,6 +474,30 @@ def main(argv=None) -> int:
     parser.add_argument("--efforts", nargs="+", default=["medium"])
     parser.add_argument("--seeds", nargs="+", type=lambda s: int(s, 0), default=list(DEFAULT_SEEDS))
     parser.add_argument("--max-pieces", type=int, default=DEFAULT_MAX_PIECES)
+    parser.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="end a live game after this much wall-clock time, or at --max-pieces, whichever comes first "
+        "(baselines and --paused arms ignore it)",
+    )
+    parser.add_argument(
+        "--jev-shortlist",
+        type=int,
+        default=0,
+        metavar="K",
+        help="with-Jev arms: Jev cuts each piece's legal placements to its top K before the model chooses "
+        "(arms are labeled +jevK; needs TYPESAFE_API_KEY)",
+    )
+    parser.add_argument(
+        "--jev-gate",
+        type=float,
+        default=None,
+        metavar="P",
+        help="with --jev-shortlist: when Jev's top placement has probability >= P, play it without asking "
+        "the model (arms are labeled +jevKgNN)",
+    )
     parser.add_argument("--rom", default="rom/tetris.gb")
     parser.add_argument("--max-usd", type=float, default=5.0, help="abort the matrix once spend reaches this")
     parser.add_argument(
@@ -520,6 +575,13 @@ def main(argv=None) -> int:
             print("\n(--skip-preflight to try anyway)")
             return 1
 
+    if not args.estimate and (args.jev_shortlist or any(is_jev(m) for m in args.models)):
+        from tetris_agent import jev
+
+        if not jev.is_configured():
+            print(f"jev arms cannot run: {jev.API_KEY_VAR} is not set (keys: {jev.API_KEY_CONSOLE_URL})")
+            return 1
+
     exemplar_block = ""
     if args.exemplars:
         from tetris_agent.traces import load_exemplar_block
@@ -538,6 +600,8 @@ def main(argv=None) -> int:
         deadline_s=args.decision_deadline,
         fixed_effort=args.fixed_effort,
         lookahead_control=args.lookahead_control,
+        jev_shortlist=args.jev_shortlist,
+        jev_gate=args.jev_gate,
     )
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
@@ -579,6 +643,7 @@ def main(argv=None) -> int:
             streamer=streamer,
             measure_power=not args.no_power,
             grade_quality=not args.no_quality,
+            max_seconds=args.max_seconds,
         )
 
     results = run_matrix(
