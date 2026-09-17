@@ -203,9 +203,13 @@ def run_arm(
     # fresh meter per run, so samples never carry across arms.
     meter = None
     if measure_power and arm.model and is_pi(arm.model):
+        from tetris_agent.pi_policy import is_remote_ollama
         from tetris_agent.power import EnergyMeter
 
-        meter = EnergyMeter()
+        # A remote Ollama (a Daytona GPU host) draws its watts there; metering
+        # this box would attribute the emulator's draw to the model.
+        if not is_remote_ollama():
+            meter = EnergyMeter()
     # Placement grading, and the trace it writes. Events only: frames are the
     # expensive part of a recording and nothing here needs them.
     grader = recorder = None
@@ -602,8 +606,10 @@ def main(argv=None) -> int:
             f"= ${energy_usd(sum(drawn)):.4f} at ${DEFAULT_KWH_PRICE}/kWh"
         )
     elif not args.no_power:
+        from tetris_agent.pi_policy import OLLAMA_URL, is_remote_ollama
         from tetris_agent.power import detect_source
 
-        print(f"local energy: n/a ({detect_source()[1]})")
+        why = f"inference ran on {OLLAMA_URL}, not this box" if is_remote_ollama() else detect_source()[1]
+        print(f"local energy: n/a ({why})")
     print(f"results: {path}")
     return 0

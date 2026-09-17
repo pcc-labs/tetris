@@ -146,6 +146,70 @@ host offers; an unmeasured run reports `n/a`, never `0.0`.
 model fits the box) and refuses in seconds rather than OOM-ing in silence.
 Run one local model at a time.
 
+### Off the Framework: a Daytona GPU host
+
+The pi/ arms only need *an* Ollama. When the box with the GPU is out of reach,
+`scripts/daytona_host.py` boots one on a [Daytona](https://daytona.io) H100
+sandbox and the harness on the laptop talks to it through `TETRIS_OLLAMA_URL`;
+the emulator, viewer, tapes capture, and `runs/` all stay local.
+
+```bash
+uv sync --group daytona                    # the SDK, driver-side only
+echo 'DAYTONA_API_KEY=...' > .env          # gitignored; the driver reads it
+
+uv run --group daytona scripts/daytona_host.py snapshot --models gemma4   # once per model list
+uv run --group daytona scripts/daytona_host.py up --models gemma4         # prints the URL
+eval "$(uv run --group daytona scripts/daytona_host.py env)"              # export TETRIS_OLLAMA_URL=...
+uv run tetris-bench --models pi/gemma4 --harnesses routed --seeds 1
+uv run --group daytona scripts/daytona_host.py down                       # or the TTL (2h) reaps it
+```
+
+Proven 2026-09-17 from a laptop: `pi/gemma4/routed+p15`, 5 pieces, 0 timeouts,
+6.8 s per decision, 88.5 tok/s end-to-end, host at $4.74/h.
+
+`snapshot` is the stereOS move applied to Daytona: it builds
+`docker/daytona/Dockerfile` server-side with `ollama pull` for every tag run
+*at build time*, so the pull is paid once and each `up` is a boot, not a
+download. The snapshot name is content-addressed from the model list and the
+Dockerfile; `up` finds the matching one or says how to build it. An org tier
+with a 5 GB snapshot cap cannot hold the weights (gemma4 alone is 11 GB):
+`snapshot --no-bake` builds the Ollama-only image and `up` pulls at boot
+(~1 min for gemma4 at the ~250 MB/s the sandboxes see). `up --snapshot
+daytona-gpu` is the same slow path on Daytona's stock GPU image. No ROM and no
+credentials enter the image either way.
+
+`up` also loads each model onto the GPU before printing the URL, at the
+131072 context pi will ask for. Without that, the first decisions spend their
+whole clock inside the load (58 s for two tokens, measured) and count as
+timeouts. And it reserves 16 vCPU on purpose: at 4 vCPU ollama's per-token
+CPU work throttled decode to 34 tok/s against 58 on 16, GPU idle either way.
+
+Three things change when Ollama is remote, all automatic: preflight stops
+sizing the model against the laptop's RAM (that is the host's problem), the
+power meter stays off (`energy_wh` reports `n/a` with the reason rather than
+attributing the emulator's draw to the model), and the bundled pi extension
+points pi's ollama provider at `${TETRIS_OLLAMA_URL}/v1`. Everything else is
+byte-identical to a local run, so rows are comparable across hosts. pi still
+needs each tag listed in `~/.pi/agent/models.json` for `--efforts` to reach the
+model (see "Reasoning level"); `up` names any tag that is missing there.
+
+**The host is a cost the bench rows don't carry.** `cost_usd` is the arm's API
+bill and stays $0 for a pi/ arm; the sandbox that served it is priced from
+what Daytona provisioned (vCPU, GiB, GPU type, at the rates in
+`daytona_host.py`, read from daytona.io/pricing on 2026-09-17) and metered from
+the sandbox's own creation time. `status` shows the running total; `down`
+appends the session to `data/daytona/hosts.jsonl`.
+
+A GPU is not optional here. The CPU sandboxes this org tier allows top out at
+4 vCPU and 8 GiB (probed 2026-09-17), which cannot hold gemma4, and Daytona
+has no unified-memory machines; the GPU menu is H100/H200/RTX PRO 6000/4090/
+5090 plus B200 and MI355X. The free $200 credit applies to CPU sandboxes only;
+GPU minutes come off the paid balance.
+
+The host is public while it is up, which is what lets plain `TETRIS_OLLAMA_URL`
+consumers call it without auth headers; it holds only weights, and the
+obscure hostname plus the TTL bound the exposure.
+
 ### Learn from your own games
 
 `tetris-play` records every piece you place to `runs/<id>/` as the same

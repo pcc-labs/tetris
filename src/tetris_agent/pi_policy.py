@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 180.0
 OLLAMA_URL = os.environ.get("TETRIS_OLLAMA_URL", "http://127.0.0.1:11434")
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0", ""}
 # A model this large relative to total RAM will thrash or get OOM-killed rather
 # than run. Measured the hard way: an 8B model needing ~10 GB resident took a
 # machine into continuous swap and had its benchmark killed twice, silently,
@@ -48,6 +49,14 @@ PI_JSON_INSTRUCTIONS = (
 PI_PROMPT_SUFFIX = (
     '\n\nAnswer with ONLY the JSON object, e.g. {"rotation": 0, "col": 4, "reason": "flat"} — nothing else.'
 )
+
+
+def is_remote_ollama(base_url: str = OLLAMA_URL) -> bool:
+    """True when TETRIS_OLLAMA_URL names another box (a Daytona GPU host, the Framework over
+    Tailscale) rather than this one — inference then costs that box's RAM and watts, not ours."""
+    from urllib.parse import urlsplit
+
+    return (urlsplit(base_url).hostname or "") not in _LOCAL_HOSTS
 
 
 def _total_ram_bytes() -> int | None:
@@ -96,7 +105,12 @@ def preflight(model_ids, base_url: str = OLLAMA_URL) -> list[str]:
         return [f"ollama unreachable at {base_url} — pi arms need it running (`ollama serve`)"]
 
     problems = []
-    total_ram = _total_ram_bytes()
+    # The fit check reads *this* box's RAM; against a remote host it would refuse a
+    # 65 GB model because the laptop has 36 GB. Remote sizing is the host's job.
+    remote = is_remote_ollama(base_url)
+    if remote:
+        logger.info("ollama is remote (%s) — skipping the RAM fit check", base_url)
+    total_ram = None if remote else _total_ram_bytes()
     for name in wanted:
         size = _match(name, installed)
         if size is None:

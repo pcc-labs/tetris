@@ -16,3 +16,6 @@ dist/
 # never commit ROMs (copyrighted)
 *.gb
 .superpowers/
+
+# DAYTONA_API_KEY and friends — never commit
+.env
