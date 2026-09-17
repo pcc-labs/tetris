@@ -86,7 +86,16 @@ MODELS: dict[str, ModelSpec] = {
     "pi/minimax-m2.7:cloud": ModelSpec("pi/minimax-m2.7:cloud", 0.30, 1.20, True, 0),
     "pi/qwen3.5:cloud": ModelSpec("pi/qwen3.5:cloud", 0.60, 3.60, True, 0),
     "pi/nemotron-3-ultra:cloud": ModelSpec("pi/nemotron-3-ultra:cloud", 0.10, 3.00, True, 0),
+    # TypeSafe's Jev (System One): typed judgments, no generation. $0.042 per
+    # million input tokens and nothing for output (docs.typesafe.ai, read
+    # 2026-09-17); no reasoning dial, so its arms are effort-free.
+    "jev-latest": ModelSpec("jev-latest", 0.042, 0.0, False, 0),
 }
+
+
+def is_jev(model_id: str) -> bool:
+    """A TypeSafe Jev model id — answered by jev_policy, never by an LLM harness."""
+    return model_id.startswith("jev")
 
 
 def is_ollama_cloud(model_id: str) -> bool:

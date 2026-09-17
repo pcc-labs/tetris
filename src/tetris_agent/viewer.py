@@ -1,7 +1,9 @@
 """Demo viewer: a Game Boy in the browser.
 
-Serves the static shell UI, a replay API over runs/, and a live hub —
-the agent pushes JSON to /ws/produce, every browser on /ws/live sees it.
+Serves the static shell UI, a replay API over runs/, a live hub — the agent
+pushes JSON to /ws/produce, every browser on /ws/live sees it — and the label
+deck: every decision of a run with its oracle grade, Jev's typed judgments of
+it on request, and the reviewer's verdict written back for the exemplar miner.
 """
 
 import asyncio
@@ -12,6 +14,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from tetris_agent import jev, labels, traces
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +84,37 @@ def _run_summary(run_dir: Path) -> dict | None:
         return None
 
 
-def create_app(runs_dir: str | Path = "runs") -> FastAPI:
+class LabelBody(BaseModel):
+    verdict: str
+    note: str = ""
+    source: str = "human"
+    jev: dict | None = None
+
+
+def create_app(runs_dir: str | Path = "runs", judge=jev.ask) -> FastAPI:
+    """`judge` is the Jev call; tests pass a stand-in so nothing leaves the box."""
     runs_dir = Path(runs_dir)
     app = FastAPI(title="tetris-agent viewer")
     hub = LiveHub()
     app.state.hub = hub
     app.state.input_peers = set()
+    # Grading a human run is ~13 ms a piece, so a long run is a noticeable
+    # pause on every visit; labels change, decisions don't, so cache the
+    # decisions per run and merge labels on the way out.
+    decision_cache: dict[str, list[dict]] = {}
+
+    def run_dir_or_404(run_id: str) -> Path:
+        run_dir = runs_dir / run_id
+        if _run_summary(run_dir) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return run_dir
+
+    def decisions_for(run_id: str) -> list[dict]:
+        run_dir = run_dir_or_404(run_id)
+        if run_id not in decision_cache:
+            decision_cache[run_id] = traces.decisions(run_dir)
+        current = labels.load_labels(run_dir)
+        return [{**d, "label": current.get(d["turn"])} for d in decision_cache[run_id]]
 
     @app.middleware("http")
     async def no_stale_frontend(request, call_next):
@@ -133,6 +163,56 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
         if not path.is_file() or runs_dir.resolve() not in path.parents:
             raise HTTPException(status_code=404, detail="frame not found")
         return FileResponse(path, media_type="image/png")
+
+    @app.get("/api/runs/{run_id}/decisions")
+    async def run_decisions(run_id: str):
+        """Every verified decision with its grade and any verdict on it, plus
+        how many pieces the run placed — the gap is what the replay could not
+        reconstruct (a tuck, a misread), and the deck shows it."""
+        return {"decisions": decisions_for(run_id), "placed": traces.placed_count(runs_dir / run_id)}
+
+    @app.put("/api/runs/{run_id}/labels/{turn}")
+    async def put_label(run_id: str, turn: int, body: LabelBody):
+        run_dir = run_dir_or_404(run_id)
+        if body.verdict not in labels.VERDICTS:
+            raise HTTPException(status_code=422, detail=f"verdict must be one of {labels.VERDICTS}")
+        if turn not in {d["turn"] for d in decisions_for(run_id)}:
+            raise HTTPException(status_code=404, detail="no verified decision on that turn")
+        return labels.set_label(run_dir, turn, body.verdict, note=body.note, source=body.source, jev=body.jev)
+
+    @app.delete("/api/runs/{run_id}/labels/{turn}")
+    async def delete_label(run_id: str, turn: int):
+        run_dir = run_dir_or_404(run_id)
+        if not labels.clear_label(run_dir, turn):
+            raise HTTPException(status_code=404, detail="no label on that turn")
+        return {"cleared": turn}
+
+    @app.get("/api/jev/questions")
+    async def jev_questions():
+        """What the deck renders, and whether this box can ask Jev at all."""
+        return {"questions": jev.PUBLIC_QUESTIONS, "groups": jev.GROUPS, "setup": jev.setup_state()}
+
+    @app.post("/api/runs/{run_id}/decisions/{turn}/judge")
+    async def judge_decision(run_id: str, turn: int):
+        """Ask Jev every question about one decision. The state is built here
+        from the run, so the browser sends nothing but the turn."""
+        if not jev.is_configured():
+            # 503 with the setup state, so the deck can say what is missing.
+            raise HTTPException(status_code=503, detail={"reason": "unconfigured", "setup": jev.setup_state()})
+        decision = next((d for d in decisions_for(run_id) if d["turn"] == turn), None)
+        if decision is None:
+            raise HTTPException(status_code=404, detail="no verified decision on that turn")
+        try:
+            result = await asyncio.to_thread(judge, jev.decision_state(decision))
+        except Exception as err:
+            logger.warning("jev: %s", err)
+            raise HTTPException(status_code=502, detail={"reason": "upstream", "error": str(err)}) from err
+        return {
+            "turn": turn,
+            "answers": result.get("answers", {}),
+            "usage": result.get("usage"),
+            "model": result.get("model"),
+        }
 
     @app.get("/api/benchmarks")
     async def list_benchmarks():

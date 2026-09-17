@@ -149,3 +149,102 @@ def test_session_end_clears_the_replay_so_idle_tabs_stay_idle():
             with client.websocket_connect("/ws/produce") as p2:
                 p2.send_text('{"type": "frame", "turn": 9}')
             assert json.loads(late.receive_text()) == {"type": "frame", "turn": 9}
+
+
+# ── label deck ──
+# A real run for the deck: summary.json for the shelf plus events the replay verifies.
+def make_human_run(runs_dir, run_id="20260808-120000-abc123"):
+    from test_traces import O_AT_0, THEN_O_AT_2, write_run
+
+    run_dir = write_run(runs_dir, run_id, "human", [("O", "O", 0, 0, 0, O_AT_0), ("O", "I", 0, 2, 0, THEN_O_AT_2)])
+    (run_dir / "summary.json").write_text(json.dumps({"run_id": run_id, "fitness": {"score": 1}, "params": {}}))
+    return run_id
+
+
+FAKE_ANSWERS = {
+    "verdict": {
+        "type": "choice",
+        "choice": "promote",
+        "probabilities": {"promote": 0.7, "neutral": 0.2, "exclude": 0.1},
+        "confidence": 0.7,
+    },
+    "quality": {"type": "score", "score": 3.2, "legend": {}, "probabilities": {}, "confidence": 0.6},
+    "creates_hole": {"type": "noul", "noul": 0.05},
+}
+
+
+def fake_judge(state, questions=None):
+    fake_judge.states.append(state)
+    return {"model": "jev-test", "answers": FAKE_ANSWERS, "usage": {"input_tokens": 500, "output_tokens": 0}}
+
+
+fake_judge.states = []
+
+
+def test_decisions_endpoint_grades_and_serves_each_turn(tmp_path):
+    run_id = make_human_run(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    body = client.get(f"/api/runs/{run_id}/decisions").json()
+    decisions = body["decisions"]
+    assert body["placed"] == 2
+    assert [d["turn"] for d in decisions] == [1, 2]
+    assert decisions[0]["piece"] == "O" and decisions[0]["label"] is None
+    assert decisions[0]["grade"]["legal_count"] > 1
+    assert client.get("/api/runs/nope/decisions").status_code == 404
+
+
+def test_labels_round_trip_through_the_api_and_reach_the_miner(tmp_path):
+    from tetris_agent.traces import mine_run
+
+    run_id = make_human_run(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    put = client.put(f"/api/runs/{run_id}/labels/2", json={"verdict": "exclude", "jev": FAKE_ANSWERS})
+    assert put.status_code == 200 and put.json()["verdict"] == "exclude"
+    assert client.get(f"/api/runs/{run_id}/decisions").json()["decisions"][1]["label"]["source"] == "human"
+    assert [e.col for e in mine_run(tmp_path / run_id)] == [0]
+    assert client.put(f"/api/runs/{run_id}/labels/2", json={"verdict": "maybe"}).status_code == 422
+    assert client.put(f"/api/runs/{run_id}/labels/99", json={"verdict": "promote"}).status_code == 404
+    assert client.delete(f"/api/runs/{run_id}/labels/2").json() == {"cleared": 2}
+    assert client.delete(f"/api/runs/{run_id}/labels/2").status_code == 404
+    assert [e.col for e in mine_run(tmp_path / run_id)] == [0, 2]
+
+
+def test_judge_endpoint_builds_the_state_and_relays_the_answers(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    run_id = make_human_run(tmp_path)
+    fake_judge.states.clear()
+    client = TestClient(create_app(tmp_path, judge=fake_judge))
+    res = client.post(f"/api/runs/{run_id}/decisions/2/judge")
+    assert res.status_code == 200
+    assert res.json()["answers"]["verdict"]["choice"] == "promote"
+    assert res.json()["model"] == "jev-test"
+    [state] = fake_judge.states
+    assert state["placement"] == {"rotation": 0, "col": 2}
+    assert state["board_before"][16:] == ["##........", "##........"]
+    assert "oracle" in state
+    assert client.post(f"/api/runs/{run_id}/decisions/99/judge").status_code == 404
+
+
+def test_judge_endpoint_reports_a_missing_key_as_setup_not_failure(tmp_path, monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    run_id = make_human_run(tmp_path)
+    client = TestClient(create_app(tmp_path, judge=fake_judge))
+    questions = client.get("/api/jev/questions").json()
+    assert questions["setup"]["configured"] is False
+    assert {q["id"] for q in questions["questions"]} >= {"verdict", "quality"}
+    res = client.post(f"/api/runs/{run_id}/decisions/1/judge")
+    assert res.status_code == 503
+    assert res.json()["detail"]["reason"] == "unconfigured"
+
+
+def test_judge_endpoint_surfaces_upstream_errors(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    run_id = make_human_run(tmp_path)
+
+    def broken(state, questions=None):
+        raise RuntimeError("TypeSafe 529: overloaded")
+
+    client = TestClient(create_app(tmp_path, judge=broken))
+    res = client.post(f"/api/runs/{run_id}/decisions/1/judge")
+    assert res.status_code == 502
+    assert "529" in res.json()["detail"]["error"]

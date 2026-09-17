@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tetris_agent.fitness import race_score
-from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_pi, spec
+from tetris_agent.pricing import DEFAULT_KWH_PRICE, energy_usd, is_jev, is_pi, spec
 from tetris_agent.recorder import RunRecorder
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,10 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     if arm.policy == "lookahead":
         return LookaheadPolicy(genome)
     block = exemplar_block if arm.exemplars else ""
+    if is_jev(arm.model):
+        from tetris_agent.jev_policy import JevPolicy
+
+        return JevPolicy(model=arm.model, harness=arm.harness, exemplar_block=block, genome=genome)
     if is_pi(arm.model):
         from tetris_agent.pi_policy import PiPolicy
 
@@ -518,6 +522,13 @@ def main(argv=None) -> int:
             for problem in problems:
                 print(f"  - {problem}")
             print("\n(--skip-preflight to try anyway)")
+            return 1
+
+    if not args.estimate and any(is_jev(m) for m in args.models):
+        from tetris_agent import jev
+
+        if not jev.is_configured():
+            print(f"jev arms cannot run: {jev.API_KEY_VAR} is not set (keys: {jev.API_KEY_CONSOLE_URL})")
             return 1
 
     exemplar_block = ""

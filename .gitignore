@@ -16,3 +16,6 @@ dist/
 # never commit ROMs (copyrighted)
 *.gb
 .superpowers/
+
+# local secrets (Daytona / TypeSafe keys)
+.env
