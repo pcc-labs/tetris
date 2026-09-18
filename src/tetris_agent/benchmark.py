@@ -178,7 +178,14 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     )
 
 
-def _arm_meta(arm: Arm, seed: int, max_pieces: int, run_id: str | None = None, lane: int | None = None) -> dict:
+def _arm_meta(
+    arm: Arm,
+    seed: int,
+    max_pieces: int,
+    run_id: str | None = None,
+    lane: int | None = None,
+    host: str | None = None,
+) -> dict:
     """The identity the viewer's banner renders: who is playing, under what rules.
 
     `run_id` is how the RACE tab finds this lane's frames afterwards: the viewer
@@ -205,6 +212,10 @@ def _arm_meta(arm: Arm, seed: int, max_pieces: int, run_id: str | None = None, l
         # tetris-play, or a bare `--live` agent — is the LIVE tab's business,
         # and must not tear down a race the tab is showing.
         "lane": lane,
+        # Where inference ran: `local`, `daytona`, or the remote hostname.
+        # `None` for a solver, which does its own thinking and reaches no host —
+        # so a mixed race shows at a glance which lanes needed a GPU at all.
+        "host": host,
     }
 
 
@@ -231,6 +242,12 @@ def run_arm(
     from tetris_agent.publisher import NoopPublisher
 
     policy = build_policy(arm, genome_params, exemplar_block)
+    # Only a pi/ arm reaches an Ollama; a solver and a cloud-API model do not.
+    host = None
+    if arm.model and is_pi(arm.model):
+        from tetris_agent.pi_policy import inference_host
+
+        host = inference_host()
     # Only local arms have an energy cost worth measuring — a cloud arm's draw is
     # someone else's datacenter, and its bill already shows up in cost_usd. A
     # fresh meter per run, so samples never carry across arms.
@@ -273,7 +290,9 @@ def run_arm(
             policy=policy,
             frame_sinks=frame_sinks,
             decision_deadline_s=arm.deadline_s,
-            session_meta=_arm_meta(arm, seed, max_pieces, run_id=getattr(recorder, "run_id", None), lane=lane),
+            session_meta=_arm_meta(
+                arm, seed, max_pieces, run_id=getattr(recorder, "run_id", None), lane=lane, host=host
+            ),
             meter=meter,
             grader=grader,
             record_frames=record_frames,
@@ -708,6 +727,18 @@ def main(argv=None) -> int:
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
     print(f"arms: {', '.join(a.name for a in arms)}")
+    # Say which box is answering, before anything runs. The same arm id means
+    # something different on a laptop than on a rented H100, and "why is this
+    # slow" is nearly always this line.
+    pi_arms = [a for a in arms if a.model and is_pi(a.model)]
+    inference = None
+    if pi_arms:
+        from tetris_agent.pi_policy import OLLAMA_URL, inference_host
+
+        inference = inference_host()
+        solvers = len(arms) - len(pi_arms)
+        mix = f", plus {solvers} solver arm(s) reaching no host" if solvers else ""
+        print(f"inference: {inference} ({OLLAMA_URL}) for {len(pi_arms)} pi/ arm(s){mix}")
     print(f"projected cost: ~${projected:.2f} (cap ${args.max_usd:.2f})")
     live_runs = sum(1 for a in arms if a.live) * len(args.seeds)
     if live_runs:
@@ -799,7 +830,10 @@ def main(argv=None) -> int:
             streamer.close()
     rows = summarize(results)
     print("\n" + render_table(rows))
-    path = write_results(results, rows, meta={"race": True, "lanes": args.lanes} if args.race else None)
+    meta = {"race": True, "lanes": args.lanes} if args.race else {}
+    if inference:
+        meta["inference_host"] = inference
+    path = write_results(results, rows, meta=meta or None)
     print(f"\ntotal spend: ${sum(r.cost for r in results):.4f}")
     drawn = [r.policy_stats.get("energy_wh") for r in results]
     drawn = [w for w in drawn if w is not None]

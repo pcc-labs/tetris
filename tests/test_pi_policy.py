@@ -492,3 +492,18 @@ def test_last_fallback_marks_a_placement_the_model_did_not_choose():
 
     p.plan(empty_board(), "O", "I", turn=2)
     assert p.last_fallback is False
+
+
+# ── which box answered ──
+
+
+def test_inference_host_names_the_box():
+    # A demo has to say which box is answering: the same arm id means something
+    # different on a laptop than on a rented H100, and the row carries no other
+    # trace of it.
+    from tetris_agent.pi_policy import inference_host
+
+    assert inference_host("http://127.0.0.1:11434") == "local"
+    assert inference_host("http://localhost:11434") == "local"
+    assert inference_host("https://11434-abc.daytonaproxy01.net") == "daytona"
+    assert inference_host("http://framework.tailnet.ts.net:11434") == "framework.tailnet.ts.net"

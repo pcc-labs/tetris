@@ -59,6 +59,22 @@ def is_remote_ollama(base_url: str = OLLAMA_URL) -> bool:
     return (urlsplit(base_url).hostname or "") not in _LOCAL_HOSTS
 
 
+def inference_host(base_url: str = OLLAMA_URL) -> str:
+    """Short label for where this arm's inference actually ran.
+
+    A demo has to be able to say which box is answering — the same arm id means
+    something different on a laptop than on a rented H100, and a row carries no
+    other trace of the difference. `daytona` is called out by name because it is
+    the host we reach for when this machine cannot spare the resources.
+    """
+    from urllib.parse import urlsplit
+
+    host = urlsplit(base_url).hostname or ""
+    if host in _LOCAL_HOSTS:
+        return "local"
+    return "daytona" if "daytona" in host else host
+
+
 def _total_ram_bytes() -> int | None:
     """Physical RAM, or None where the platform won't say."""
     try:

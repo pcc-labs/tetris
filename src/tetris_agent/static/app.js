@@ -116,6 +116,7 @@ function applyEvent(e, slot = 0, live = false) {
         s.sub = [
           d.harness,
           d.effort && `effort ${d.effort}`,
+          d.host && `on ${d.host}`,   // which box answered; absent for a solver
           d.mode,
           d.seed != null && `seed ${d.seed}`,
         ].filter(Boolean).join(" · ");

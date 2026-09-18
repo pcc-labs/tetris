@@ -738,3 +738,11 @@ def test_results_keep_each_lane_run_id(tmp_path):
     results = [ArmResult(arm="heuristic", seed=0, run_id="run-a"), ArmResult(arm="random", seed=0, run_id="run-b")]
     saved = json.loads(write_results(results, [], out_dir=tmp_path, meta={"race": True, "lanes": 4}).read_text())
     assert [r["run_id"] for r in saved["runs"]] == ["run-a", "run-b"]
+
+
+def test_arm_meta_records_which_box_answered():
+    # None for a solver: it reaches no host at all, so a mixed race shows at a
+    # glance which lanes needed a GPU.
+    assert _arm_meta(Arm(policy="heuristic"), 0, 10)["host"] is None
+    model_arm = Arm(policy="model", model="pi/gemma4", harness="routed")
+    assert _arm_meta(model_arm, 0, 10, host="daytona")["host"] == "daytona"
