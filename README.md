@@ -252,6 +252,33 @@ byte-identical to a local run, so rows are comparable across hosts. pi still
 needs each tag listed in `~/.pi/agent/models.json` for `--efforts` to reach the
 model (see "Reasoning level"); `up` names any tag that is missing there.
 
+**Two things the host taught us (2026-09-18), both cheap to trip over:**
+
+*The tag suffix decides whether the model thinks.* `pricing.MODELS` carries
+`pi/gemma4:latest` but not bare `pi/gemma4`, so the bare tag falls through to
+`supports_effort=False` and the harness never sends `--thinking off` — even
+though pi's own `models.json` has a full `thinkingLevelMap` for it. The model
+then spends its whole budget reasoning and returns *empty content*. Same box,
+same harness, same prompt:
+
+| arm | latency | tok/s | timeouts | avg holes |
+|---|---|---|---|---|
+| `pi/gemma4/routed+p20` | 67,700 ms | 0.0 | 3/4 | 4.0 |
+| `pi/gemma4:latest/routed/off+p20` | 2,179 ms | 14.1 | 0/4 | 1.5 |
+
+A 31x difference hanging on `:latest`. An arm whose name carries no effort
+(`pi/gemma4/routed+live`, not `…/off+live`) is the tell that the flag never
+reached the model.
+
+*The GPU box comes with 4 vCPU, and that is the ceiling for a race.* `snapshot`
+asks for `cpu=16`, and a sandbox inherits its snapshot's resources —
+`CreateSandboxFromSnapshotParams` has no `resources` field to override it — but
+an org tier that caps CPU hands back 4 anyway. Ollama's per-token work is
+CPU-bound, so concurrent lanes starve each other: gemma4 alone answers in 2.2 s,
+41 s beside gpt-oss:20b, and three gemma4 lanes across three harnesses measured
+10.7 / 37.5 / 41.6 s. **One model per host** until the tier gives up more CPU; a
+race wanting several models wants a box with real cores, not a bigger GPU.
+
 **The host is a cost the bench rows don't carry.** `cost_usd` is the arm's API
 bill and stays $0 for a pi/ arm; the sandbox that served it is priced from
 what Daytona provisioned (vCPU, GiB, GPU type, at the rates in

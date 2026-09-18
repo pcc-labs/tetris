@@ -58,6 +58,11 @@ MODELS_DIR = "/models"
 INSTALL_CMD = "command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh"
 # OLLAMA_KEEP_ALIVE: a matrix idles between arms for longer than the 5-minute
 # default, and reloading 20 GB per arm is a visible dent in the first decision.
+# OLLAMA_MAX_LOADED_MODELS / OLLAMA_NUM_PARALLEL: a `--race` runs one model per
+# lane against this one daemon. Ollama's default cap is 3 models per GPU, so a
+# four-model race would evict and reload between decisions — and a cold load
+# measured 58 s for two tokens here, which is every decision in that lane lost.
+# Four of each is the race's lane count; raise both together to race wider.
 # setsid + </dev/null: an exec'd command only returns once nothing holds its
 # stdio, and a bare `nohup … &` still inherits stdin — the serve step then sits
 # out its whole timeout and comes back as a 408 (live, 2026-09-17).
@@ -66,6 +71,7 @@ INSTALL_CMD = "command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.co
 SERVE_CMD = (
     f"M={MODELS_DIR}; {{ mkdir -p $M && [ -w $M ]; }} 2>/dev/null || M=$HOME/.ollama/models; mkdir -p $M; "
     "OLLAMA_MODELS=$M OLLAMA_HOST=0.0.0.0 OLLAMA_KEEP_ALIVE=1h "
+    "OLLAMA_MAX_LOADED_MODELS=4 OLLAMA_NUM_PARALLEL=4 "
     "setsid nohup ollama serve > /tmp/ollama.log 2>&1 < /dev/null &"
 )
 # `break`, never `exit`: these snippets are joined into one exec'd script.
