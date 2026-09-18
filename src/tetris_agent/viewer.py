@@ -23,10 +23,12 @@ class LiveHub:
 
     def __init__(self):
         self.subscribers: set[WebSocket] = set()
-        # The most recent session-start, replayed to late-joining tabs so a
-        # browser opened mid-arm still learns who is playing (a benchmark arm
-        # can run for many minutes). Cleared on session end.
-        self.last_session_start: str | None = None
+        # The most recent session-start per slot, replayed to late-joining tabs
+        # so a browser opened mid-arm still learns who is playing (a benchmark
+        # arm can run for many minutes). A race fills several slots at once, so
+        # a late tab needs every live one, not just the newest. Keyed by slot;
+        # a slot is dropped on session end.
+        self.last_session_start: dict[int, str] = {}
 
     def note(self, message: str) -> None:
         """Remember session boundaries. Cheap: frames are base64 payloads that
@@ -40,11 +42,12 @@ class LiveHub:
         event = parsed.get("event") or {}
         if event.get("event_type") != "session":
             return
+        slot = parsed.get("slot", 0)
         phase = (event.get("data") or {}).get("phase")
         if phase == "start":
-            self.last_session_start = message
+            self.last_session_start[slot] = message
         elif phase == "end":
-            self.last_session_start = None
+            self.last_session_start.pop(slot, None)
 
     async def broadcast(self, message: str) -> None:
         dead = []
@@ -150,6 +153,19 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
                     {
                         "id": path.stem,
                         "recorded_at": saved.get("recorded_at", ""),
+                        # A race's latency columns describe a contended clock;
+                        # the leaderboard says so rather than letting the rows
+                        # pass as serially measured.
+                        "race": saved.get("race", False),
+                        "lanes": saved.get("lanes"),
+                        # Lane order, with whichever runs were kept: this is how
+                        # the RACE tab replays all four after a reload, when the
+                        # live session that named them is long gone.
+                        "lane_runs": [
+                            {"arm": r.get("arm", ""), "run_id": r.get("run_id", "")}
+                            for r in saved.get("runs", [])
+                            if r.get("run_id")
+                        ],
                         "summary": saved.get("summary", []),
                     }
                 )
@@ -195,11 +211,12 @@ def create_app(runs_dir: str | Path = "runs") -> FastAPI:
     @app.websocket("/ws/live")
     async def ws_live(ws: WebSocket):
         await ws.accept()
-        # Replay before subscribing, so the identity always precedes any
-        # broadcast this tab sees.
-        if hub.last_session_start is not None:
+        # Replay before subscribing, so every identity precedes any broadcast
+        # this tab sees. Sorted by slot: the grid fills left-to-right rather
+        # than in whatever order the lanes happened to start.
+        for slot in sorted(hub.last_session_start):
             try:
-                await ws.send_text(hub.last_session_start)
+                await ws.send_text(hub.last_session_start[slot])
             except Exception:
                 pass
         hub.subscribers.add(ws)

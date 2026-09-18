@@ -35,6 +35,10 @@ uv run tetris-bench --models pi/gemma4 pi/gpt-oss:20b \
                     --harnesses features routed \
                     --seeds 1 --max-pieces 30 --decision-deadline 15 --watch
 
+# Race four arms at once on one seed (viewer's RACE tab; --record to replay it)
+uv run tetris-bench --race --watch --models pi/gemma4 pi/gpt-oss:20b heuristic \
+                    --harnesses routed --seeds 0 --max-pieces 30
+
 # Play it yourself (keyboard in the viewer's LIVE tab)
 uv run tetris-play --seed 0 --max-pieces 50
 ```
@@ -72,6 +76,61 @@ flatlined arm is attributable: slow hardware or an overspent thinking budget.
 (`tok_s` is end-to-end — output tokens over the pi subprocess's wall clock — so
 it reads low for terse arms and is comparable across pi arms, not with a
 provider's decode rate.)
+
+### The race
+
+A matrix runs its arms one after another, which is the only honest way to
+measure latency — and it means watching five live arms is five consecutive
+real-time games. `--race` trades that for a comparison you can watch: every arm
+at once, on one seed, one screen each in the viewer's RACE tab.
+
+```bash
+uv run tetris-viewer                                   # RACE tab, then:
+uv run tetris-bench --race --watch --seeds 0 --max-pieces 30 \
+                    --models pi/gemma4 pi/gpt-oss:20b pi/qwen3:32b heuristic
+```
+
+Same pieces, same clock, four boards diverging in real time. `--lanes` sets the
+width (default 4); more arms than lanes is refused rather than truncated.
+Baselines are nameable in `--models` now — `heuristic`, `random`, `no-input`,
+`lookahead` each take a lane in the position written, which is how a race gets
+one baseline as an opponent instead of all three.
+
+#### Replaying a race
+
+`--record` keeps each lane's frames in `runs/`, and the RACE tab's REPLAY button
+plays all four back on one timeline — one scrub bar, four boards, the same
+moment across the grid.
+
+```bash
+uv run tetris-bench --race --watch --record --models heuristic lookahead random no-input \
+                    --seeds 0 --max-pieces 30
+```
+
+Recording is off by default, because frames are the expensive part of a
+recording and a race you only wanted to watch shouldn't fill `runs/`. The lane
+run ids are written into the results file alongside `race` and `lanes`, so
+REPLAY finds all four even in a tab that never watched the race — or was simply
+reloaded since. A lane that topped out early holds on its final board while the
+others play on, which is what it looked like live.
+
+**A race measures play, not speed.** Lanes share cores and one Ollama, so
+`latency_ms`, `late`, `timeouts` and `tok_s` describe the contended clock;
+`score`, `lines`, `pieces` and `avg_holes` are the comparable columns. The
+results file records `race` and `lanes`, and the leaderboard labels it, so race
+rows can't be mistaken for serially measured ones. Three settings are forced
+because they read that inflated clock and would otherwise change *what* is being
+measured: `--fixed-effort` (the effort ladder steps down on observed latency, so
+contention would land an arm below the tier its row advertises), `--no-power`
+(one host meter cannot attribute watts to one lane), and live-only — a bounded
+pause discards decisions past its deadline, and contention alone pushes them
+there.
+
+On a Daytona H100 the daemon is configured for four resident models
+(`OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_NUM_PARALLEL`); Ollama's default cap is
+three per GPU, and a fourth model would evict and reload between decisions at
+58 s a load. Race wider and both need raising — and the weights plus KV cache at
+pi's 131072 context have to fit.
 
 ### Placement quality
 

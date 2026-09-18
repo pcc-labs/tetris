@@ -6,7 +6,7 @@
 <title>GRAMBOY · tetris-agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 <div class="bench">
@@ -16,6 +16,7 @@
     <p class="sub">SELF-HEALING TETRIS AGENT — BENCH VIEWER</p>
     <div class="mode-switch" role="tablist">
       <button id="btn-live" class="mode active" role="tab">LIVE</button>
+      <button id="btn-race" class="mode" role="tab">RACE</button>
       <button id="btn-replay" class="mode" role="tab">REPLAY</button>
       <button id="btn-bench" class="mode" role="tab">BENCH</button>
     </div>
@@ -24,7 +25,7 @@
   <main class="stage">
 
     <!-- ══════════ THE DEVICE ══════════ -->
-    <section class="gameboy" aria-label="Game Boy">
+    <section class="gameboy" id="gameboy" aria-label="Game Boy">
       <div class="cart-slot"></div>
       <div class="shell">
         <div class="shell-topline"><span></span><span></span></div>
@@ -67,7 +68,7 @@
     </section>
 
     <!-- ══════════ BENCH TELEMETRY ══════════ -->
-    <section class="panel" aria-label="Telemetry">
+    <section class="panel" id="telemetry" aria-label="Telemetry">
       <div class="panel-head">TELEMETRY <span id="feed-state" class="feed-state">IDLE</span></div>
 
       <div id="arm-banner" class="arm-banner hidden">
@@ -115,6 +116,28 @@
       <div id="bench-body" class="bench-body">loading…</div>
     </section>
 
+    <!-- ══════════ RACE GRID ══════════ -->
+    <section class="panel race hidden" id="race-panel" aria-label="Race">
+      <div class="panel-head">RACE <span class="dim">same seed · same pieces · same clock</span></div>
+      <div id="race-grid" class="race-grid"></div>
+
+      <div id="race-deck" class="race-deck hidden">
+        <div class="panel-head small">TRANSPORT <span class="dim" id="race-deck-note"></span></div>
+        <div class="transport">
+          <button id="race-replay" class="t-btn t-replay" title="replay this race">REPLAY</button>
+          <button id="race-play" class="t-btn">▶</button>
+          <input id="race-scrub" type="range" min="0" max="0" value="0">
+          <span id="race-pos" class="t-frame">0/0</span>
+          <button id="race-speed" class="t-btn t-speed">1×</button>
+        </div>
+      </div>
+
+      <div id="race-empty" class="race-empty">
+        no race on the wire — start one with<br>
+        <code>uv run tetris-bench --race --watch --models …</code>
+      </div>
+    </section>
+
   </main>
 
   <footer class="benchfoot">
@@ -122,6 +145,6 @@
     <span>fitness → healer → race → genome</span>
   </footer>
 </div>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

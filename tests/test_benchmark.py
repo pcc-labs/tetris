@@ -5,12 +5,14 @@ import pytest
 from tetris_agent.benchmark import (
     Arm,
     ArmResult,
+    _arm_meta,
     build_policy,
     estimate_cost,
     expand_arms,
     main,
     render_table,
     run_matrix,
+    run_race,
     summarize,
     write_results,
 )
@@ -645,3 +647,94 @@ def test_no_quality_produces_no_grading_and_no_trace_directory(monkeypatch, tmp_
     assert result.error == ""  # the fake run really completed
     assert "placement_graded" not in [e.get("event_type") for e in streamer.events]
     assert list(tmp_path.iterdir()) == [], "no trace directory should exist under RUNS_DIR"
+
+
+# ── race: every arm at once, one seed ──
+
+
+def test_expand_arms_gives_a_named_baseline_its_own_lane():
+    # A race wants one baseline as an opponent, not all three, and a solver has
+    # no harness — so a baseline named in --models contributes exactly one arm.
+    arms = expand_arms(
+        ["claude-opus-5", "heuristic"], ["board", "features"], ["low"], include_control=False
+    )
+    assert [a.name for a in arms] == ["claude-opus-5/board/low+live", "claude-opus-5/features/low+live", "heuristic"]
+
+
+def test_named_baseline_keeps_the_position_it_was_written_in():
+    # Arm order is lane order in a race.
+    arms = expand_arms(["heuristic", "claude-opus-5"], ["board"], ["low"], include_control=False)
+    assert [a.name for a in arms] == ["heuristic", "claude-opus-5/board/low+live"]
+
+
+def test_named_baseline_is_not_duplicated_by_the_control_arms():
+    arms = expand_arms(["heuristic"], ["board"], ["low"], include_control=True)
+    assert [a.name for a in arms].count("heuristic") == 1
+
+
+def test_run_race_runs_every_arm_concurrently():
+    # The point of a race is overlap: if the lanes were serialized, the barrier
+    # would never trip and this test would time out rather than pass.
+    import threading
+
+    arms = [Arm(policy=p) for p in ("heuristic", "random", "no-input")]
+    barrier = threading.Barrier(len(arms), timeout=5)
+    slots = {}
+
+    def fake_runner(arm, seed, rom_path, max_pieces, slot):
+        slots[arm.name] = slot
+        barrier.wait()  # only returns once every lane is inside
+        return ArmResult(arm=arm.name, seed=seed, fitness=fitness(), policy_stats={})
+
+    results = run_race(arms, seed=0, rom_path="x", runner=fake_runner)
+
+    assert [r.arm for r in results] == ["heuristic", "random", "no-input"]  # arm order, not finish order
+    assert sorted(slots.values()) == [0, 1, 2]
+
+
+def test_run_race_refuses_more_arms_than_lanes():
+    arms = [Arm(policy=p) for p in ("heuristic", "random", "no-input")]
+    with pytest.raises(ValueError, match="will not fit in 2 lanes"):
+        run_race(arms, seed=0, rom_path="x", lanes=2, runner=lambda *a: None)
+
+
+def test_one_failed_lane_does_not_kill_the_race():
+    arms = [Arm(policy="heuristic"), Arm(policy="random")]
+
+    def fake_runner(arm, seed, rom_path, max_pieces, slot):
+        if arm.policy == "heuristic":
+            raise RuntimeError("emulator went away")
+        return ArmResult(arm=arm.name, seed=seed, fitness=fitness(), policy_stats={})
+
+    results = run_race(arms, seed=0, rom_path="x", runner=fake_runner)
+    assert len(results) == 2
+    assert "emulator went away" in results[0].error
+    assert results[1].fitness
+
+
+def test_write_results_records_that_a_race_produced_the_rows(tmp_path):
+    # Without this the file is indistinguishable from a serial one, and its
+    # latency columns would be read as if nothing had been contending.
+    path = write_results([], [], out_dir=tmp_path, meta={"race": True, "lanes": 4})
+    saved = json.loads(path.read_text())
+    assert saved["race"] is True and saved["lanes"] == 4
+
+
+def test_a_plain_matrix_is_not_marked_as_a_race(tmp_path):
+    saved = json.loads(write_results([], [], out_dir=tmp_path).read_text())
+    assert "race" not in saved
+
+
+def test_arm_meta_carries_the_run_id_for_replay():
+    # The viewer only learns about a run over the wire, so the id has to ride
+    # along with the identity or the RACE tab can never find the frames.
+    meta = _arm_meta(Arm(policy="heuristic"), seed=0, max_pieces=10, run_id="20260918-005322-1f586a")
+    assert meta["run_id"] == "20260918-005322-1f586a"
+    assert _arm_meta(Arm(policy="heuristic"), seed=0, max_pieces=10)["run_id"] is None
+
+
+def test_results_keep_each_lane_run_id(tmp_path):
+    # This is what lets a reloaded tab replay all four lanes of a past race.
+    results = [ArmResult(arm="heuristic", seed=0, run_id="run-a"), ArmResult(arm="random", seed=0, run_id="run-b")]
+    saved = json.loads(write_results(results, [], out_dir=tmp_path, meta={"race": True, "lanes": 4}).read_text())
+    assert [r["run_id"] for r in saved["runs"]] == ["run-a", "run-b"]

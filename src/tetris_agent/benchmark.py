@@ -64,6 +64,10 @@ class ArmResult:
     fitness: dict = field(default_factory=dict)
     policy_stats: dict = field(default_factory=dict)
     error: str = ""
+    # Where this arm's recording landed, when --record kept one. The viewer
+    # replays a race from these, so a tab that never watched it live — or was
+    # simply reloaded since — can still find the frames.
+    run_id: str = ""
 
     @property
     def cost(self) -> float:
@@ -74,6 +78,11 @@ class ArmResult:
 # plays), `random` is chance within the legal action space, `heuristic` is the
 # tuned-solver ceiling. A model arm is only interesting above `random`.
 BASELINE_POLICIES = ("no-input", "random", "heuristic")
+
+# Baselines may also be named directly in `--models`, which is how a race gives
+# one of them a lane: `--models pi/gemma4 pi/gpt-oss:20b heuristic` is a far
+# better matchup than the all-or-nothing `--no-control` switch allows.
+NAMEABLE_BASELINES = BASELINE_POLICIES + ("lookahead",)
 
 
 def expand_arms(
@@ -95,24 +104,35 @@ def expand_arms(
     Model arms default to live: the game does not pause while the model
     thinks. Baselines stay non-live — their decisions are instant, so pacing
     them to real time would change nothing but the wall clock.
+
+    A baseline named in `models` contributes one arm in the position it was
+    written, not one per (harness, effort): the harness is what reasoning is
+    done for a *model*, and means nothing to a solver.
     """
     arms = [Arm(policy=p) for p in reversed(BASELINE_POLICIES)] if include_control else []
-    seen = set()
-    for model, harness, effort in itertools.product(models, harnesses, efforts):
-        eff = effort if spec(model).supports_effort else None
-        arm = Arm(
-            policy="model",
-            model=model,
-            harness=harness,
-            effort=eff,
-            exemplars=exemplars,
-            live=live,
-            deadline_s=None if live else deadline_s,
-            fixed_effort=fixed_effort,
-        )
-        if arm.name not in seen:
-            seen.add(arm.name)
-            arms.append(arm)
+    seen = {a.name for a in arms}
+    for model in models:
+        if model in NAMEABLE_BASELINES:
+            arm = Arm(policy=model)
+            if arm.name not in seen:
+                seen.add(arm.name)
+                arms.append(arm)
+            continue
+        for harness, effort in itertools.product(harnesses, efforts):
+            eff = effort if spec(model).supports_effort else None
+            arm = Arm(
+                policy="model",
+                model=model,
+                harness=harness,
+                effort=eff,
+                exemplars=exemplars,
+                live=live,
+                deadline_s=None if live else deadline_s,
+                fixed_effort=fixed_effort,
+            )
+            if arm.name not in seen:
+                seen.add(arm.name)
+                arms.append(arm)
     # Appended last, never inserted: a command run before this flag existed
     # must produce the same rows in the same order, plus this one at the end.
     if lookahead_control:
@@ -158,8 +178,13 @@ def build_policy(arm: Arm, genome_params: dict | None = None, exemplar_block: st
     )
 
 
-def _arm_meta(arm: Arm, seed: int, max_pieces: int) -> dict:
-    """The identity the viewer's banner renders: who is playing, under what rules."""
+def _arm_meta(arm: Arm, seed: int, max_pieces: int, run_id: str | None = None, lane: int | None = None) -> dict:
+    """The identity the viewer's banner renders: who is playing, under what rules.
+
+    `run_id` is how the RACE tab finds this lane's frames afterwards: the viewer
+    only ever learns about a run over the wire, so the id has to ride along with
+    the identity rather than being discovered from the directory later.
+    """
     if arm.live:
         mode = "live"
     elif arm.deadline_s is not None:
@@ -174,6 +199,12 @@ def _arm_meta(arm: Arm, seed: int, max_pieces: int) -> dict:
         "mode": mode,
         "seed": seed,
         "max_pieces": max_pieces,
+        "run_id": run_id,
+        # Which lane of a race this is, and `None` for anything that is not a
+        # race. The RACE grid belongs to races alone: a lone live session —
+        # tetris-play, or a bare `--live` agent — is the LIVE tab's business,
+        # and must not tear down a race the tab is showing.
+        "lane": lane,
     }
 
 
@@ -188,6 +219,8 @@ def run_arm(
     streamer=None,
     measure_power: bool = False,
     grade_quality: bool = True,
+    record_frames: bool = False,
+    lane: int | None = None,
 ) -> ArmResult:
     from tetris_agent.agent import TetrisAgent, _Tee
     from tetris_agent.emulator import Emulator
@@ -210,8 +243,9 @@ def run_arm(
         # this box would attribute the emulator's draw to the model.
         if not is_remote_ollama():
             meter = EnergyMeter()
-    # Placement grading, and the trace it writes. Events only: frames are the
-    # expensive part of a recording and nothing here needs them.
+    # Placement grading, and the trace it writes. Events only by default:
+    # frames are the expensive part of a recording and grading needs none of
+    # them. `record_frames` is what --record buys — the pixels a replay needs.
     grader = recorder = None
     if grade_quality:
         import functools
@@ -219,6 +253,7 @@ def run_arm(
         from tetris_agent.quality import DEFAULT_PLY, grade
 
         grader = functools.partial(grade, genome=Genome.from_params(genome_params or {}), ply=DEFAULT_PLY)
+    if grade_quality or record_frames:
         recorder = RunRecorder(RUNS_DIR, label=arm.name)
     # Live arms need the wall-clock pacer. Paused arms run uncapped — unless a
     # viewer is watching, in which case real time is the point.
@@ -238,10 +273,10 @@ def run_arm(
             policy=policy,
             frame_sinks=frame_sinks,
             decision_deadline_s=arm.deadline_s,
-            session_meta=_arm_meta(arm, seed, max_pieces),
+            session_meta=_arm_meta(arm, seed, max_pieces, run_id=getattr(recorder, "run_id", None), lane=lane),
             meter=meter,
             grader=grader,
-            record_frames=False,
+            record_frames=record_frames,
         )
         if streamer is not None:
             emu.frame_hook = lambda: streamer.send_frame(agent.collector.turn, emu.screenshot())
@@ -254,7 +289,9 @@ def run_arm(
             **getattr(agent, "paused_stats", {}),
             **(meter.stats() if meter else {}),
         }
-        return ArmResult(arm=arm.name, seed=seed, policy_stats=stats, error=repr(exc))
+        return ArmResult(
+            arm=arm.name, seed=seed, policy_stats=stats, error=repr(exc), run_id=getattr(recorder, "run_id", "")
+        )
     finally:
         emu.stop()
     stats = {
@@ -263,7 +300,9 @@ def run_arm(
         **getattr(agent, "paused_stats", {}),
         **(meter.stats() if meter else {}),
     }
-    return ArmResult(arm=arm.name, seed=seed, fitness=fitness, policy_stats=stats)
+    return ArmResult(
+        arm=arm.name, seed=seed, fitness=fitness, policy_stats=stats, run_id=getattr(recorder, "run_id", "")
+    )
 
 
 def estimate_cost(arms: list[Arm], seeds: list[int], max_pieces: int, tokens_per_decision: int = 2400) -> float:
@@ -306,6 +345,52 @@ def run_matrix(
             if on_result:
                 on_result(result, spent)
     return results
+
+
+def run_race(
+    arms: list[Arm],
+    seed: int,
+    rom_path,
+    max_pieces: int = DEFAULT_MAX_PIECES,
+    lanes: int = 4,
+    runner=None,
+) -> list[ArmResult]:
+    """Every arm at once, on one seed: a head-to-head race.
+
+    The matrix runs arms one after another, which is the only way to measure
+    latency honestly — but it means watching a five-arm matrix is five
+    consecutive real-time games. A race trades that measurement honesty for a
+    comparison you can see: identical pieces, identical clock, four screens.
+
+    Lane index is the arm's viewer slot, so `runner` is called as
+    `(arm, seed, rom_path, max_pieces, slot)`. Results come back in arm order,
+    not completion order, so the summary table is deterministic.
+
+    Threads, not processes: each lane drives its own PyBoy, policy, recorder
+    and streamer, and touches no shared mutable state. The emulators are paced
+    with sleeps and the model calls are subprocess or socket waits, so four
+    lanes spend nearly all their time off the GIL.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if runner is None:
+        runner = run_arm
+    if not arms:
+        return []
+    if len(arms) > lanes:
+        raise ValueError(f"{len(arms)} arms will not fit in {lanes} lanes: {', '.join(a.name for a in arms)}")
+
+    results: list[ArmResult | None] = [None] * len(arms)
+    with ThreadPoolExecutor(max_workers=len(arms)) as pool:
+        futures = {pool.submit(runner, arm, seed, rom_path, max_pieces, i): i for i, arm in enumerate(arms)}
+        for future in as_completed(futures):
+            lane = futures[future]
+            try:
+                results[lane] = future.result()
+            except Exception as exc:  # one bad lane must not kill the race
+                logger.exception("lane %d (%s) failed", lane, arms[lane].name)
+                results[lane] = ArmResult(arm=arms[lane].name, seed=seed, error=repr(exc))
+    return [r for r in results if r is not None]
 
 
 def summarize(results: list[ArmResult]) -> list[dict]:
@@ -420,7 +505,16 @@ def render_table(rows: list[dict]) -> str:
     return f"{header}\n{sep}\n{body}"
 
 
-def write_results(results: list[ArmResult], rows: list[dict], out_dir: Path = RESULTS_DIR) -> Path:
+def write_results(
+    results: list[ArmResult],
+    rows: list[dict],
+    out_dir: Path = RESULTS_DIR,
+    meta: dict | None = None,
+) -> Path:
+    """`meta` records how the matrix was run. A race's latency-derived columns
+    are not comparable to serially-measured ones, and the file is otherwise
+    indistinguishable from a serial one — so `{"race": True, "lanes": n}` rides
+    along and the viewer's leaderboard says so."""
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     path = out_dir / f"benchmark-{stamp}.json"
@@ -428,6 +522,7 @@ def write_results(results: list[ArmResult], rows: list[dict], out_dir: Path = RE
         json.dumps(
             {
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
+                **(meta or {}),
                 "summary": rows,
                 "runs": [asdict(r) for r in results],
             },
@@ -435,6 +530,44 @@ def write_results(results: list[ArmResult], rows: list[dict], out_dir: Path = RE
         )
     )
     return path
+
+
+def _apply_race_mode(args) -> int:
+    """Validate --race and force the settings a shared clock makes mandatory.
+
+    Lanes contend for cores and for one Ollama, so wall-clock latency in a race
+    is partly the scheduler's doing. Three knobs read that inflated clock and
+    would quietly change what is being measured; a race pins all three rather
+    than letting a row describe the scheduler. Returns a nonzero exit code to
+    abort, 0 to continue.
+    """
+    if args.paused or args.decision_deadline is not None:
+        # Not refused, because on hardware where no model beats level-0 gravity
+        # a live race is three boards filling with garbage — no demo at all.
+        # The cost is that each lane freezes on its own model's clock, so the
+        # lanes drift apart: same pieces, no longer the same moment.
+        print(
+            "--race with a bounded pause: each lane freezes while its own model thinks, so\n"
+            "the lanes drift out of step — same pieces, not the same clock. Decisions slower\n"
+            "than the deadline are still discarded, and under contention some of those\n"
+            "discards are the scheduler's rather than the model's."
+        )
+    if len(args.seeds) != 1:
+        print(f"--race is one piece sequence for everyone; got {len(args.seeds)} seeds. Pass a single --seeds value.")
+        return 1
+    if not args.no_control:
+        args.no_control = True
+        print("--race implies --no-control (name a baseline in --models to give it a lane)")
+    if not args.fixed_effort:
+        args.fixed_effort = True
+        print(
+            "--race implies --fixed-effort (the effort ladder steps down on observed latency,\n"
+            "so contention would land an arm below the tier its row advertises)"
+        )
+    if not args.no_power:
+        args.no_power = True
+        print("--race implies --no-power (one host meter cannot attribute watts to one lane)")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -478,6 +611,25 @@ def main(argv=None) -> int:
         action="store_true",
         help="stream every arm to the viewer's LIVE tab (uv run tetris-viewer) as it plays",
     )
+    parser.add_argument(
+        "--race",
+        action="store_true",
+        help="run every arm at once on one seed — same pieces, same clock, one screen each "
+        "in the viewer's RACE tab (pair with --watch)",
+    )
+    parser.add_argument(
+        "--lanes",
+        type=int,
+        default=4,
+        metavar="N",
+        help="how many arms --race runs side by side (default 4)",
+    )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="keep each arm's frames in runs/, so the viewer can replay it afterwards "
+        "(off by default — frames are the expensive part of a recording)",
+    )
     parser.add_argument("--viewer-url", default="ws://127.0.0.1:8000", help="viewer WebSocket base for --watch")
     parser.add_argument(
         "--level",
@@ -513,6 +665,9 @@ def main(argv=None) -> int:
         args.paused = True
         print(f"--decision-deadline {args.decision_deadline:g} implies --paused (bounded-pause mode)")
 
+    if args.race and (rc := _apply_race_mode(args)):
+        return rc
+
     if not args.skip_preflight and any(is_pi(m) for m in args.models):
         from tetris_agent.pi_policy import preflight
 
@@ -543,6 +698,13 @@ def main(argv=None) -> int:
         fixed_effort=args.fixed_effort,
         lookahead_control=args.lookahead_control,
     )
+    if args.race and len(arms) > args.lanes:
+        print(f"--race has {args.lanes} lanes but this is {len(arms)} arms:")
+        for arm in arms:
+            print(f"  - {arm.name}")
+        print("\nTrim --models / --harnesses / --efforts, or raise --lanes.")
+        return 1
+
     projected = estimate_cost(arms, args.seeds, args.max_pieces)
     print(f"{len(arms)} arms x {len(args.seeds)} seed(s) x {args.max_pieces} pieces")
     print(f"arms: {', '.join(a.name for a in arms)}")
@@ -552,7 +714,10 @@ def main(argv=None) -> int:
         from tetris_agent.emulator import Emulator
 
         secs_per_piece = Emulator._GRAVITY_RELOADS[args.level] * 17 / 60
-        minutes = live_runs * args.max_pieces * secs_per_piece / 60
+        # A race overlaps its lanes, so the wall clock is one arm's game, not
+        # the sum of them — that overlap is most of the point.
+        concurrent = live_runs if not args.race else 1
+        minutes = concurrent * args.max_pieces * secs_per_piece / 60
         print(
             f"live arms run in real time: worst case ~{minutes:.0f} min wall-clock "
             f"(level {args.level}); --paused for the old fast mode"
@@ -560,19 +725,39 @@ def main(argv=None) -> int:
     if args.estimate:
         return 0
 
+    if args.race:
+        print(
+            "\nrace mode: lanes share cores and one Ollama, so latency_ms / late / timeouts /\n"
+            "tok_s describe the contended clock. They are not comparable to serial rows;\n"
+            "score, lines, pieces and holes are. The results file records race + lanes.\n"
+        )
+        if args.max_usd is not None and projected > args.max_usd:
+            print(
+                f"projected ${projected:.2f} is over the ${args.max_usd:.2f} cap. A race starts every arm\n"
+                "at once, so there is no mid-matrix abort to fall back on — raise --max-usd or trim the race."
+            )
+            return 1
+
     def progress(result: ArmResult, spent: float) -> None:
         f = result.fitness
         status = result.error or f"score={f.get('score', 0)} pieces={f.get('pieces_placed', 0)}"
         print(f"  [{result.arm} seed={result.seed}] {status}  spent=${spent:.4f}")
 
-    streamer = None
+    # One streamer per lane: a websockets.sync connection is not safe for
+    # concurrent sends, and the slot is what tells the browser which screen a
+    # frame belongs to. A serial matrix keeps its single slot-0 streamer.
+    streamers = []
     if args.watch:
         from tetris_agent.live import LiveStreamer
 
-        streamer = LiveStreamer(args.viewer_url)
-        print(f"streaming arms to the viewer at {args.viewer_url} (LIVE tab)")
+        lanes = len(arms) if args.race else 1
+        streamers = [LiveStreamer(args.viewer_url, slot=i) for i in range(lanes)]
+        tab = "RACE" if args.race else "LIVE"
+        print(f"streaming arms to the viewer at {args.viewer_url} ({tab} tab)")
+        if args.race and not args.record:
+            print("  (--record to keep the frames, so the RACE tab can replay this afterwards)")
 
-    def runner(arm, seed, rom_path, max_pieces):
+    def runner(arm, seed, rom_path, max_pieces, slot=0):
         return run_arm(
             arm,
             seed,
@@ -580,23 +765,41 @@ def main(argv=None) -> int:
             max_pieces,
             exemplar_block=exemplar_block,
             level=args.level,
-            streamer=streamer,
+            streamer=streamers[slot] if streamers else None,
             measure_power=not args.no_power,
             grade_quality=not args.no_quality,
+            record_frames=args.record,
+            lane=slot if args.race else None,
         )
 
-    results = run_matrix(
-        arms,
-        args.seeds,
-        args.rom,
-        max_pieces=args.max_pieces,
-        max_usd=args.max_usd,
-        runner=runner,
-        on_result=progress,
-    )
+    try:
+        if args.race:
+            results = run_race(
+                arms,
+                args.seeds[0],
+                args.rom,
+                max_pieces=args.max_pieces,
+                lanes=args.lanes,
+                runner=runner,
+            )
+            for result in results:
+                progress(result, sum(r.cost for r in results))
+        else:
+            results = run_matrix(
+                arms,
+                args.seeds,
+                args.rom,
+                max_pieces=args.max_pieces,
+                max_usd=args.max_usd,
+                runner=lambda a, s, r, m: runner(a, s, r, m),
+                on_result=progress,
+            )
+    finally:
+        for streamer in streamers:
+            streamer.close()
     rows = summarize(results)
     print("\n" + render_table(rows))
-    path = write_results(results, rows)
+    path = write_results(results, rows, meta={"race": True, "lanes": args.lanes} if args.race else None)
     print(f"\ntotal spend: ${sum(r.cost for r in results):.4f}")
     drawn = [r.policy_stats.get("energy_wh") for r in results]
     drawn = [w for w in drawn if w is not None]
