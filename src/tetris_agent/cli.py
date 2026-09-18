@@ -150,12 +150,16 @@ def agent_main(argv=None) -> int:
         frame_sinks.append(streamer.send_frame)
 
     # Local arms bill no API, so their cost is watts. Cloud arms draw their power
-    # in someone else's datacenter and already report it as cost_usd.
+    # in someone else's datacenter and already report it as cost_usd. A remote
+    # Ollama (TETRIS_OLLAMA_URL) is the same story: this box's meter would read
+    # the emulator, not the inference.
     meter = None
     if not cfg.no_power and cfg.policy == "model" and is_pi(cfg.model):
+        from tetris_agent.pi_policy import is_remote_ollama
         from tetris_agent.power import EnergyMeter
 
-        meter = EnergyMeter()
+        if not is_remote_ollama():
+            meter = EnergyMeter()
 
     # Placement grading against the two-ply oracle, on by default like the benchmark.
     grader = None

@@ -256,3 +256,60 @@ body {
 .arm-status.think { color: var(--amber); }
 .arm-status.ok { color: var(--phos); }
 .arm-status.late { color: var(--magenta); }
+
+/* ══════════ RACE GRID ══════════ */
+/* Four lanes, one seed. Each tile is the LCD and just enough telemetry to read
+   the race at a glance — the full GRAMBOY shell only earns its space when
+   there is one hero device. */
+.panel.race { grid-column: 1 / -1; border-top-color: var(--amber); }
+.panel.race.hidden { display: none; }
+#gameboy.hidden, #telemetry.hidden { display: none; }
+
+.race-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding-top: 4px; }
+/* One row per race where it fits: three models read best side by side, four
+   fall back to a 2x2 rather than four cramped columns. */
+.race-grid[data-lanes="1"] { grid-template-columns: minmax(0, 1fr); }
+.race-grid[data-lanes="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .race-grid[data-lanes="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .race-grid, .race-grid[data-lanes="3"] { grid-template-columns: minmax(0, 1fr); } }
+
+.race-tile { background: #101216; border: 1px solid #262b34; padding: 14px; }
+.race-arm {
+  font-family: var(--pixel); font-size: 14px; color: var(--phos);
+  text-shadow: 0 0 10px rgba(121,193,66,.3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Readable from the back of a room: this is the line that says which lane is
+   which model, and at 10px dim grey it was unreadable on a projector. */
+.race-sub {
+  font-size: 12px; color: #9aa3b2; letter-spacing: .3px;
+  padding: 7px 0 10px; min-height: 14px;
+}
+
+.race-lcd {
+  background: linear-gradient(160deg, #8fae12, #7f9c14);
+  padding: 8px; border-radius: 4px;
+  box-shadow: inset 0 3px 10px rgba(0,0,0,.45);
+}
+.race-lcd canvas {
+  display: block; width: 100%; aspect-ratio: 160 / 144;
+  image-rendering: pixelated; background: var(--lcd-3);
+  filter: sepia(.9) hue-rotate(46deg) saturate(2.1) brightness(.92) contrast(1.05);
+}
+
+.race-readouts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 12px; }
+.race-readouts label { display: block; font-size: 8px; letter-spacing: 1.5px; color: var(--dim); padding-bottom: 4px; }
+.race-readouts output {
+  font-family: var(--pixel); font-size: 11px; color: var(--phos);
+  text-shadow: 0 0 8px rgba(121,193,66,.35);
+}
+.race-status { padding-top: 10px; font-size: 10px; min-height: 14px; }
+
+.race-empty { padding: 28px 4px; color: var(--dim); font-size: 12px; line-height: 1.9; }
+.race-empty.hidden { display: none; }
+.race-empty code { color: var(--phos); font-family: var(--mono); font-size: 11px; }
+
+.race-deck { padding-top: 6px; }
+.race-deck.hidden { display: none; }
+.race-deck .transport { padding-top: 4px; }
+.t-replay { font-family: var(--pixel); font-size: 9px; letter-spacing: 1px; color: var(--amber); }

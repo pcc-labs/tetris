@@ -17,13 +17,19 @@ except Exception:  # pragma: no cover - optional dependency guard
 
 
 class LiveStreamer:
-    def __init__(self, viewer_url: str):
+    def __init__(self, viewer_url: str, slot: int = 0):
         # Accept the viewer's http(s) address too: connect failures are
         # swallowed by design below, so a wrong scheme would otherwise
         # disable streaming with nothing but one log line to show for it.
         base = viewer_url.rstrip("/")
         base = base.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
         self.url = base + "/ws/produce"
+        # Which screen this producer owns in the viewer's RACE grid. A race
+        # runs one streamer (one websocket) per lane — websockets.sync
+        # connections are not safe for concurrent sends — and the browser
+        # routes by slot. Slot 0 is the single-screen LIVE tab, so every
+        # pre-existing producer keeps its old behaviour by defaulting here.
+        self.slot = slot
         self._ws = None
         self._warned = False
 
@@ -35,7 +41,7 @@ class LiveStreamer:
         try:
             self._ensure()
             if self._ws is not None:
-                self._ws.send(json.dumps(message))
+                self._ws.send(json.dumps({**message, "slot": self.slot}))
         except Exception:
             if not self._warned:
                 logger.info("viewer not reachable at %s; streaming disabled until it is", self.url)

@@ -30,6 +30,10 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.6",
 ]
+# Driver-side only: scripts/daytona_host.py. Never installed into the sandbox image.
+daytona = [
+    "daytona>=0.100.0",
+]
 
 [build-system]
 requires = ["hatchling"]

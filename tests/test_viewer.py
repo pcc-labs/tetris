@@ -149,3 +149,74 @@ def test_session_end_clears_the_replay_so_idle_tabs_stay_idle():
             with client.websocket_connect("/ws/produce") as p2:
                 p2.send_text('{"type": "frame", "turn": 9}')
             assert json.loads(late.receive_text()) == {"type": "frame", "turn": 9}
+
+
+def _session(slot, phase, model="pi/gemma4"):
+    return json.dumps(
+        {"type": "event", "slot": slot, "event": {"event_type": "session", "data": {"phase": phase, "model": model}}}
+    )
+
+
+def test_late_tab_learns_every_racing_lane(tmp_path):
+    # A race fills several slots at once. A tab opened mid-race needs all of
+    # them replayed, not just the newest — otherwise its grid has holes that
+    # never fill, because a session start only happens once.
+    client = TestClient(create_app(tmp_path))
+    with client.websocket_connect("/ws/produce") as producer:
+        producer.send_text(_session(0, "start", "pi/gemma4"))
+        producer.send_text(_session(2, "start", "heuristic"))
+        with client.websocket_connect("/ws/live") as late:
+            replayed = [json.loads(late.receive_text()) for _ in range(2)]
+
+    assert [m["slot"] for m in replayed] == [0, 2]  # sorted, so the grid fills left to right
+    assert {m["event"]["data"]["model"] for m in replayed} == {"pi/gemma4", "heuristic"}
+
+
+def test_a_finished_lane_stops_being_replayed(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    with client.websocket_connect("/ws/produce") as producer:
+        producer.send_text(_session(0, "start"))
+        producer.send_text(_session(1, "start"))
+        producer.send_text(_session(0, "end"))
+        with client.websocket_connect("/ws/live") as late:
+            replayed = json.loads(late.receive_text())
+
+    assert replayed["slot"] == 1
+
+
+def test_benchmarks_expose_whether_a_race_produced_them(tmp_path, monkeypatch):
+    # list_benchmarks reads data/benchmarks relative to the cwd.
+    bench = tmp_path / "data" / "benchmarks"
+    bench.mkdir(parents=True)
+    (bench / "benchmark-20260917-120000.json").write_text(
+        json.dumps({"recorded_at": "2026-09-17T12:00:00", "race": True, "lanes": 4, "summary": []})
+    )
+    monkeypatch.chdir(tmp_path)
+    listed = TestClient(create_app(tmp_path)).get("/api/benchmarks").json()
+    assert listed[0]["race"] is True and listed[0]["lanes"] == 4
+
+
+def test_benchmarks_expose_each_lane_run_for_replay(tmp_path, monkeypatch):
+    # A tab that never watched the race (or was reloaded since) replays it from
+    # these ids; a lane with no kept recording is simply absent.
+    bench = tmp_path / "data" / "benchmarks"
+    bench.mkdir(parents=True)
+    (bench / "benchmark-20260918-005354.json").write_text(
+        json.dumps(
+            {
+                "recorded_at": "2026-09-18T00:53:54",
+                "race": True,
+                "lanes": 4,
+                "summary": [],
+                "runs": [
+                    {"arm": "heuristic", "run_id": "run-a"},
+                    {"arm": "random", "run_id": ""},
+                    {"arm": "lookahead", "run_id": "run-c"},
+                ],
+            }
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+    lanes = TestClient(create_app(tmp_path)).get("/api/benchmarks").json()[0]["lane_runs"]
+    assert [lane["arm"] for lane in lanes] == ["heuristic", "lookahead"]
+    assert [lane["run_id"] for lane in lanes] == ["run-a", "run-c"]

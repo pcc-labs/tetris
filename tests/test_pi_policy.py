@@ -314,6 +314,28 @@ def test_preflight_cannot_judge_size_without_a_ram_reading(monkeypatch):
     assert mod.preflight(["pi/qwen3:8b"]) == []  # unknown RAM must not block the run
 
 
+def test_preflight_does_not_size_a_remote_host_by_this_boxs_ram(monkeypatch):
+    import tetris_agent.pi_policy as mod
+
+    # A 65 GB model on a Daytona H100, judged from a 36 GB laptop: the laptop's RAM is irrelevant.
+    monkeypatch.setattr(mod, "_ollama_models", lambda *a, **k: {"gpt-oss:120b": 65_000_000_000})
+    monkeypatch.setattr(mod, "_total_ram_bytes", lambda: 36_000_000_000)
+    assert mod.preflight(["pi/gpt-oss:120b"]) != []  # local: refused
+    assert mod.preflight(["pi/gpt-oss:120b"], base_url="https://11434-abc.proxy.daytona.works") == []
+    # ...but "not pulled" is still the remote host's problem to report.
+    problems = mod.preflight(["pi/gemma4"], base_url="https://11434-abc.proxy.daytona.works")
+    assert len(problems) == 1 and "not pulled" in problems[0]
+
+
+def test_is_remote_ollama_treats_loopback_as_local():
+    from tetris_agent.pi_policy import is_remote_ollama
+
+    for local in ("http://127.0.0.1:11434", "http://localhost:11434", "http://[::1]:11434", "http://0.0.0.0:11434"):
+        assert not is_remote_ollama(local)
+    for remote in ("https://11434-abc.proxy.daytona.works", "http://framework.tail1234.ts.net:11434"):
+        assert is_remote_ollama(remote)
+
+
 def test_exemplar_block_reaches_the_pi_system_prompt():
     runner = FakeRunner([completed(jsonl_events('{"rotation": 0, "col": 3, "reason": "x"}'))])
     p = PiPolicy(model="pi/gemma3", runner=runner, exemplar_block="EXEMPLARS")
@@ -470,3 +492,18 @@ def test_last_fallback_marks_a_placement_the_model_did_not_choose():
 
     p.plan(empty_board(), "O", "I", turn=2)
     assert p.last_fallback is False
+
+
+# ── which box answered ──
+
+
+def test_inference_host_names_the_box():
+    # A demo has to say which box is answering: the same arm id means something
+    # different on a laptop than on a rented H100, and the row carries no other
+    # trace of it.
+    from tetris_agent.pi_policy import inference_host
+
+    assert inference_host("http://127.0.0.1:11434") == "local"
+    assert inference_host("http://localhost:11434") == "local"
+    assert inference_host("https://11434-abc.daytonaproxy01.net") == "daytona"
+    assert inference_host("http://framework.tailnet.ts.net:11434") == "framework.tailnet.ts.net"
